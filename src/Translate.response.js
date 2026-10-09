@@ -4,18 +4,26 @@ import MD5 from "crypto-js/md5.js";
 import VTT from "../upstream/WebVTT/WebVTT.mjs";
 import database from "../upstream/function/database.mjs";
 import setENV from "../upstream/function/setENV.mjs";
-import setCache from "../upstream/function/setCache.mjs";
+import { FilmCache, filmIdentity } from "./FilmCache.mjs";
 import detectFormat from "../upstream/function/detectFormat.mjs";
 import Translate from "../upstream/class/Translate.mjs";
 
 // Modified by JerseyRiver: public configuration, isolated cache revision; no embedded secrets.
+const NATIVE_CACHE_KEY = "@HBOAI.Translate.Caches.NativeVTT";
 const SUBTITLE_CACHE_KEY = "@HBOAI.Translate.Caches.Subtitles";
 const IN_FLIGHT_KEY = "@HBOAI.Translate.State.InFlight";
 const COOLDOWN_KEY = "@HBOAI.Translate.State.Cooldown";
 const LOCK_TTL = 58000;
 const WAIT_TIMEOUT = 48000;
 const WAIT_INTERVAL = 400;
-const SUBTITLE_CACHE_LIMIT = 20;
+const TRANSLATION_DEADLINE = Date.now() + 55000;
+const FILM_CACHE_LIMIT = 20;
+let currentFilmId;
+const filmCache = new FilmCache($persistentStore, FILM_CACHE_LIMIT, () => {
+    // Old flat entries have no reliable ownership; clear them at the first film eviction.
+    Storage.setItem(NATIVE_CACHE_KEY, []);
+    Storage.setItem(SUBTITLE_CACHE_KEY, []);
+});
 const CUE_BOUNDARY_CACHE_REVISION = "cue-isolation-v2";
 const url = new URL($request.url);
 const virtualRequest = typeof $response === 'undefined';
@@ -28,13 +36,30 @@ const output = virtualRequest ? { status: 200, headers: { 'Content-Type': 'text/
     const segment = context.segments?.[$request.url];
     if (!segment || segment.expires < Date.now() || !segment.source) throw new Error('AI subtitle context expired');
     if (!/^https:\/\/[^/?#@]+\//.test(segment.source) || !/(?:^|\.)(?:e\.hbo|media\.max\.com|media\.h264\.io)$/.test(segment.source.split('/')[2])) throw new Error('Invalid subtitle source');
-    output.body = await new Promise((resolve, reject) => {
-        $httpClient.get({ url: segment.source, timeout: 12 }, (error, response, body) => {
-            if (error || Number(response?.status || response?.statusCode) !== 200) return reject(new Error('English subtitle fetch failed; choose external subtitles'));
-            resolve(String(body || ''));
+    currentFilmId = filmIdentity(context.plans?.[segment.id], segment.id);
+    filmCache.adoptIdentity(`manifest:${segment.id}`, currentFilmId);
+    const nativeKey = MD5(new URL(segment.source).pathname).toString();
+    const nativeCache = Storage.getItem(NATIVE_CACHE_KEY, []);
+    const cachedNative = Array.isArray(nativeCache) && nativeCache.find(entry => entry.key === MD5(segment.source).toString() && entry.expires > Date.now());
+    const groupedNative = filmCache.native(currentFilmId, nativeKey);
+    const nativeBody = groupedNative || cachedNative?.body;
+    if (validNativeVTT(nativeBody)) {
+        output.body = nativeBody;
+        if (!groupedNative) filmCache.put(currentFilmId, "native", nativeKey, nativeBody);
+        output.headers["X-HBO-AI-Native-Cache"] = "hit";
+    } else {
+        output.body = await new Promise((resolve, reject) => {
+            $httpClient.get({ url: segment.source, timeout: 12000 }, (error, response, body) => {
+                if (error || Number(response?.status || response?.statusCode) !== 200) return reject(new Error('English subtitle fetch failed; choose external subtitles'));
+                resolve(String(body || ''));
+            });
         });
-    });
-    if (!/^WEBVTT(?:\s|$)/.test(output.body) || !/\d{2}:\d{2}(?::\d{2})?\.\d{2,3}\s+-->/.test(output.body)) throw new Error('English subtitles unavailable; choose external subtitles');
+        if (!validNativeVTT(output.body)) throw new Error('English subtitles unavailable; choose external subtitles');
+        filmCache.put(currentFilmId, "native", nativeKey, output.body);
+        output.headers["X-HBO-AI-Native-Cache"] = "miss";
+    }
+    output.headers["X-HBO-AI-Cache-Unit"] = "film; limit=20";
+
 	Console.logLevel = "ERROR";
 	const { Settings, Caches } = setENV("HBOAI", [["Universal", "Translate", "API"]], database);
 	const argumentValue = (...keys) => {
@@ -48,18 +73,19 @@ const output = virtualRequest ? { status: 200, headers: { 'Content-Type': 'text/
 		return undefined;
 	};
 	const liveAPIKey = argumentValue("GeminiAPIKey", "Gemini.APIKey");
-	Settings.Vendor = argumentValue("Vendor") || Settings.Vendor;
+	Settings.Vendor = "Gemini";
 	Settings.Gemini = {
 		...Settings.Gemini,
 		APIKey: liveAPIKey || Settings.GeminiAPIKey || Settings.Gemini?.APIKey || "",
 		Model: argumentValue("GeminiModel", "Gemini.Model") || Settings.GeminiModel || Settings.Gemini?.Model,
-		BatchSize: argumentValue("GeminiBatchSize", "Gemini.BatchSize") || Settings.GeminiBatchSize || Settings.Gemini?.BatchSize,
+		BatchSize: 400,
+        DeadlineAt: TRANSLATION_DEADLINE,
 	};
 	output.headers["X-DualSubs-Gemini-Key-Source"] = liveAPIKey ? "argument" : Settings.Gemini?.APIKey ? "storage" : "missing";
 	output.headers["X-DualSubs-Gemini-Model"] = Settings.Gemini.Model;
-	Console.logLevel = Settings.LogLevel;
+	Console.logLevel = "WARN";
 	const languages = [
-		"EN",
+		(segment.language || "AUTO").toUpperCase(),
 		(url.searchParams?.get("tlang") ?? Caches?.tlang)?.toUpperCase?.() ?? Settings.Languages[1],
 	];
 	const body = VTT.parse(output.body);
@@ -67,7 +93,7 @@ const output = virtualRequest ? { status: 200, headers: { 'Content-Type': 'text/
 	const originalCacheKey = MD5(`${Settings.Vendor}|${Settings?.Gemini?.Model ?? ""}|${languages.join("|")}|${output.body}`).toString();
 	const cacheKey = MD5(`${CUE_BOUNDARY_CACHE_REVISION}|${originalCacheKey}`).toString();
 	output.headers["X-DualSubs-Gemini-Cache-Revision"] = CUE_BOUNDARY_CACHE_REVISION;
-	let translation = Caches.Subtitles.get(cacheKey);
+	let translation = readPersistentTranslation(cacheKey, fullText.length);
 	if (!Array.isArray(translation) || translation.length !== fullText.length) {
 		const slot = await claimTranslationSlot(cacheKey, fullText.length);
 		if (slot.translation) {
@@ -81,7 +107,7 @@ const output = virtualRequest ? { status: 200, headers: { 'Content-Type': 'text/
 				if (Array.isArray(translation) && translation.length === fullText.length) {
 					const saved = savePersistentTranslation(cacheKey, translation);
 					Caches.Subtitles = saved.cache;
-					output.headers["X-DualSubs-Gemini-Cache"] = `${saved.verified ? "write-ok" : "write-failed"}; entries=${saved.size}`;
+					output.headers["X-DualSubs-Gemini-Cache"] = `${saved.verified ? "write-ok" : "write-failed"}; films=${saved.films}; segments=${saved.size}`;
 					clearCooldown();
 				}
 				output.headers["X-DualSubs-Gemini"] = `translated; cues=${translation.length}`;
@@ -93,6 +119,8 @@ const output = virtualRequest ? { status: 200, headers: { 'Content-Type': 'text/
 			}
 		}
 	} else {
+		// Adopt a matching legacy flat translation without another Gemini call.
+		if (!filmCache.translation(currentFilmId, cacheKey)) savePersistentTranslation(cacheKey, translation);
 		Console.info("Gemini 字幕缓存命中");
 		output.headers["X-DualSubs-Gemini-Coordinator"] = "cache";
 		output.headers["X-DualSubs-Gemini"] = `cache-hit; cues=${translation.length}`;
@@ -110,6 +138,10 @@ const output = virtualRequest ? { status: 200, headers: { 'Content-Type': 'text/
 		output.headers["X-DualSubs-Gemini-Error"] = encodeURIComponent(String(error?.message ?? error)).slice(0, 180);
 	})
 	.finally(() => virtualRequest ? $done({ response: output }) : done(output));
+
+function validNativeVTT(body) {
+    return typeof body === "string" && /^WEBVTT(?:\s|$)/.test(body) && /\d{2}:\d{2}(?::\d{2})?\.\d{2,3}\s+-->/.test(body);
+}
 
 async function translator(vendor = "Gemini", method = "Part", text = [], [source = "AUTO", target = "ZH"], api = {}, times = 3, interval = 100, exponential = true) {
 	let length = 120;
@@ -170,7 +202,7 @@ async function retry(fn, retriesLeft = 3, interval = 100, exponential = true) {
 async function claimTranslationSlot(cacheKey, expectedLength) {
 	const owner = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 	const startedAt = Date.now();
-	while (Date.now() - startedAt < WAIT_TIMEOUT) {
+	while (Date.now() - startedAt < WAIT_TIMEOUT && Date.now() < TRANSLATION_DEADLINE - 2000) {
 		const cached = readPersistentTranslation(cacheKey, expectedLength);
 		if (cached) return { translation: cached };
 		const cooldown = Storage.getItem(COOLDOWN_KEY, {});
@@ -197,26 +229,17 @@ function readPersistentTranslation(cacheKey, expectedLength) {
 }
 
 function readPersistentSubtitleCache() {
-	let stored = Storage.getItem(SUBTITLE_CACHE_KEY, []);
-	if (typeof stored === "string") {
-		try {
-			stored = JSON.parse(stored);
-		} catch {
-			stored = [];
-		}
-	}
-	return stored instanceof Map ? new Map(stored) : new Map(Array.isArray(stored) ? stored : []);
+    let legacy = Storage.getItem(SUBTITLE_CACHE_KEY, []);
+    if (typeof legacy === "string") { try { legacy = JSON.parse(legacy); } catch { legacy = []; } }
+    const cache = new Map(Array.isArray(legacy) ? legacy : []);
+    for (const [key, value] of Object.entries(filmCache.film(currentFilmId)?.translations || {})) cache.set(key, value);
+    return cache;
 }
 
 function savePersistentTranslation(cacheKey, translation) {
-	// 翻译期间其他脚本可能已写入别的影片；保存前重新读取并合并，避免旧快照覆盖新缓存。
-	const latest = readPersistentSubtitleCache();
-	latest.delete(cacheKey);
-	latest.set(cacheKey, translation);
-	const serialized = setCache(latest, SUBTITLE_CACHE_LIMIT);
-	const written = Storage.setItem(SUBTITLE_CACHE_KEY, serialized);
-	const verified = Boolean(written) && Boolean(readPersistentTranslation(cacheKey, translation.length));
-	return { cache: new Map(serialized), size: serialized.length, verified };
+    const saved = filmCache.put(currentFilmId, "translations", cacheKey, translation);
+    const verified = saved.written && Boolean(filmCache.translation(currentFilmId, cacheKey));
+    return { cache: new Map(Object.entries(filmCache.film(currentFilmId)?.translations || {})), size: saved.segments, films: saved.films, verified };
 }
 
 function releaseTranslationSlot(owner) {

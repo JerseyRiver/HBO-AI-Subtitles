@@ -216,12 +216,14 @@ export default class Translate {
 		const indexed = new Map();
 		const requestTranslations = async (entries, transportRetries = 1) => {
 			const requestStartedAt = Date.now();
+            const remaining = api?.DeadlineAt ? api.DeadlineAt - Date.now() - 500 : 55000;
+            if (remaining < 1000) throw new Error("字幕翻译等待超时，请重试");
 			const entryIds = new Set(entries.map(item => item.id));
 			const entryText = entries.map(item => item.text);
 			const maxOutputTokens = Math.min(49152, Math.max(1024, Math.ceil(entryText.join("").length * 2 + entries.length * 24)));
 			const request = {
 				url: `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
-				timeout: 55000,
+				timeout: Math.min(55000, remaining),
 				headers: {
 					"Content-Type": "application/json",
 					"x-goog-api-key": key,

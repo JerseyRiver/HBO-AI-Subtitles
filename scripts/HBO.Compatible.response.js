@@ -24,7 +24,7 @@ await apply((function($request,$response,$argument,$done){
     var q=p.indexOf('?'),path=q<0?p:p.slice(0,q),stack=[];path.split('/').forEach(function(x){if(x==='..')stack.pop();else if(x && x!=='.')stack.push(x);});return origin+'/'+stack.join('/')+(q<0?'':p.slice(q));
   }
   function allowed(u){return /^https:\/\/[^/?#@]+\//.test(u) && /(?:^|\.)(?:e\.hbo|media\.max\.com|media\.h264\.io)$/.test(u.split('/')[2]);}
-  function get(u){return new Promise(function(resolve,reject){$httpClient.get({url:u,timeout:12},function(e,r,b){if(e || Number(r && (r.status || r.statusCode))!==200)reject(new Error('subtitle fetch failed'));else resolve(String(b || ''));});});}
+  function get(u,timeout){return new Promise(function(resolve,reject){$httpClient.get({url:u,timeout:timeout || 12000},function(e,r,b){if(e || Number(r && (r.status || r.statusCode))!==200)reject(new Error('subtitle fetch failed'));else resolve(String(b || ''));});});}
   function metadataCache(){try{return JSON.parse($persistentStore.read(META) || '{}');}catch(e){return {};}}
   function collectMetadata(document){
     var nodes=(document.included || []).concat(Array.isArray(document.data)?document.data:[document.data]),index={},cache=metadataCache();
@@ -47,9 +47,7 @@ await apply((function($request,$response,$argument,$done){
   }
   function mediaFor(plan){
     var automatic=plan.editId && metadataCache()[plan.editId];
-    if(automatic)return automatic;
-    if(!String(args.Title || '').trim())return null;
-    return {title:String(args.Title).trim(),year:args.Year || '',type:args.MediaType || 'movie',season:args.Season || '',episode:args.Episode || ''};
+    return automatic || null;
   }
   function gateway(plan){
     var root=String(args.GatewayURL || '').replace(/\/+$/,''),media=mediaFor(plan);
@@ -67,19 +65,49 @@ await apply((function($request,$response,$argument,$done){
       if(!allowed(native))throw new Error('subtitle host');
       if(native.indexOf('/gcs/'+plan.id+'/t/')>=0){
         var target=plan.origin+'/__hbo_ai__/'+plan.id+'/ai/'+slot+'/seg-'+index+'.vtt';
-        var current=read();current.segments[target]={id:plan.id,source:native,expires:plan.expires};save(current);lines[i]=target;index++;
+        var current=read();current.segments[target]={id:plan.id,source:native,expires:plan.expires,language:(plan.aiLanguages || {})[slot] || plan.sourceLanguage || 'AUTO'};save(current);lines[i]=target;index++;
       }else lines[i]=native;
     }
     if(!index)throw new Error('English main subtitles unavailable');
     return lines.join('\n');
   }
   function addTrack(lines,group,label,language,uri){lines.push('#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="'+group+'",NAME="'+label+'",LANGUAGE="'+language+'",DEFAULT=NO,AUTOSELECT=NO,URI="'+uri+'"');}
+  function chinese(language){return /^(?:zh|cmn|yue)(?:-|$)/i.test(language || '');}
+  function tracksFrom(body,base){
+    return body.split(/\r?\n/).filter(function(l){return l.indexOf('#EXT-X-MEDIA:')===0 && l.indexOf('/__hbo_ai__/')<0;}).map(attrs).filter(function(a){return a.TYPE==='SUBTITLES' && a.URI && a.FORCED!=='YES';}).map(function(a){return {a:a,url:absolute(a.URI,base)};});
+  }
+  async function choose(plan,tracks){
+    plan.selection='none';plan.selectedSource='';
+    if(plan.officialChinese || tracks.some(function(t){return chinese(t.a.LANGUAGE);}))return;
+    var candidates=tracks.filter(function(t){return allowed(t.url);}).sort(function(a,b){return Number(!/^en(?:-|$)/i.test(a.a.LANGUAGE || ''))-Number(!/^en(?:-|$)/i.test(b.a.LANGUAGE || ''));});
+    // Probe at most two full tracks within one shared 10-second budget.
+    var deadline=Date.now()+10000;plan.templateSource=candidates[0] ? candidates[0].url : '';
+    for(var ci=0;ci<Math.min(2,candidates.length) && Date.now()<deadline-500;ci++){
+      var t=candidates[ci];
+      plan.verified=plan.verified || {};
+      var probe=plan.verified[t.url];
+      if(!probe || probe.expires<Date.now()){
+        try{
+          var playlistBody=await get(t.url,Math.min(5000,deadline-Date.now()));
+          if(!/^#EXTM3U/.test(playlistBody) || !/#EXT-X-ENDLIST/.test(playlistBody) || /#EXT-X-MAP:|#EXT-X-KEY:/.test(playlistBody))throw new Error('unsupported subtitle playlist');
+          var first=playlistBody.split(/\r?\n/).filter(function(l){return l && l.charAt(0)!=='#';}).map(function(l){return absolute(l,t.url);}).find(function(u){return u.indexOf('/gcs/'+plan.id+'/t/')>=0 && allowed(u);});
+          if(!first)throw new Error('main subtitles missing');
+          var text=await get(first,Math.max(1,Math.min(5000,deadline-Date.now())));
+          if(!/^WEBVTT(?:\s|$)/.test(text) || !/\d{2}:\d{2}(?::\d{2})?\.\d{2,3}\s+-->/.test(text))throw new Error('subtitle cues missing');
+          probe={ok:true,body:playlistBody,expires:Date.now()+5*60000};
+        }catch(e){probe={ok:false,expires:Date.now()+15000};}
+        // Bound storage when CDNs rotate signed URLs.
+        plan.verified[t.url]=probe;Object.keys(plan.verified).filter(function(k){return !candidates.slice(0,2).some(function(t){return t.url===k;});}).forEach(function(k){delete plan.verified[k];});
+      }
+      if(probe.ok){plan.templateSource=t.url;plan.selection='ai';plan.selectedSource=t.url;plan.sourceLanguage=t.a.LANGUAGE || 'AUTO';return;}
+    }
+    if(plan.external)plan.selection='external';
+  }
   function advertise(main,plan){
     var original=(main.textTracks || []).filter(function(t){return !/-x-(ai|external)$/.test(t.language || '');});
-    var english=original.find(function(t){return /^en(?:-|$)/i.test(t.language || '');});
     main.textTracks=original.slice();
-    if(english && args.Mode!=='External')main.textTracks.push({type:'subtitles',language:'zh-Hans-x-ai',displayName:'AI 翻译',format:'webvtt'});
-    if(plan.external && args.Mode!=='AI')main.textTracks.push({type:'subtitles',language:'zh-Hans-x-external',displayName:'外部字幕',format:'webvtt'});
+    if(plan.selection==='ai')main.textTracks.push({type:'subtitles',language:'zh-Hans-x-ai',displayName:'AI 翻译',format:'webvtt'});
+    else if(plan.selection==='external')main.textTracks.push({type:'subtitles',language:'zh-Hans-x-external',displayName:'外部字幕',format:'webvtt'});
   }
 
   function fallbackPeriods(plan){
@@ -111,7 +139,7 @@ await apply((function($request,$response,$argument,$done){
       if(kind==='ai'){
         var source=vp.aiSources && vp.aiSources[slot];
         if(!source || !allowed(source))throw new Error('AI source not registered');
-        var native=await get(source);var translated=aiPlaylist(native,source,vp,slot);
+        var verified=vp.verified && vp.verified[source];var native=verified && verified.ok && verified.expires>Date.now()?verified.body:await get(source);var translated=aiPlaylist(native,source,vp,slot);
         return done({response:{status:200,headers:{'Content-Type':'application/vnd.apple.mpegurl','Cache-Control':'no-store'},body:translated}});
       }
       vp.external=gateway(vp);if(!vp.external)return done({response:{status:404,headers:{'Content-Type':'text/plain'},body:'HBO external metadata unavailable'}});
@@ -130,7 +158,13 @@ await apply((function($request,$response,$argument,$done){
       var safe=periods.every(function(p,i){return p.duration>0 && p.start>=0 && (!i || Math.abs(p.start-periods[i-1].start-periods[i-1].duration)<0.1);});
       var playbackRequest={};try{playbackRequest=JSON.parse($request.body || '{}');}catch(e){}
       var plan={editId:playbackRequest.editId || main.editId || '',id:main.manifestationId.toLowerCase(),master:manifest.url,origin:/^https:\/\/[^/]+/.exec(manifest.url)[0],duration:main.duration,start:main.start,periods:periods,safePeriods:safe,expires:Date.now()+6*3600000};
-      plan.external=safe?gateway(plan):'';var previous=s.plans[plan.id];if(previous){plan.aiSources=previous.aiSources;plan.templateSource=previous.templateSource;}s.plans[plan.id]=plan;save(s);advertise(main,plan);return done({body:JSON.stringify(data),headers:Object.assign({},$response.headers,{'X-HBO-AI-Stage':'playback-options'})});
+      plan.external=safe?gateway(plan):'';var previous=s.plans[plan.id];if(previous){plan.aiSources=previous.aiSources;plan.aiLanguages=previous.aiLanguages;plan.templateSource=previous.templateSource;plan.verified=previous.verified;}
+      plan.officialChinese=(main.textTracks || []).some(function(t){return chinese(t.language) && !/-x-(ai|external)$/.test(t.language || '') && !/forced/i.test(t.type || '');});
+      if(plan.officialChinese)plan.selection='none';else{
+        try{await choose(plan,tracksFrom(await get(manifest.url,5000),manifest.url));}catch(e){plan.selection=plan.external?'external':'none';}
+      }
+      // Merge the plan only: concurrent refreshes must not wipe segment registrations.
+      var latest=read();latest.plans[plan.id]=plan;save(latest);advertise(main,plan);return done({body:JSON.stringify(data),headers:Object.assign({},$response.headers,{'X-HBO-AI-Stage':'playback-options'})});
     }
     if(body.indexOf('#EXTM3U')!==0)return done();
     var idMatch=/\/gcs\/([a-f0-9-]{36})\//i.exec(u),id=idMatch && idMatch[1].toLowerCase(),plan=s.plans[id];
@@ -140,24 +174,19 @@ await apply((function($request,$response,$argument,$done){
       plan.external=gateway(plan);
       var lines=body.split(/\r?\n/).filter(function(l){return !(l.indexOf('#EXT-X-MEDIA:')===0 && l.indexOf('/__hbo_ai__/')>=0);}),tracks=[];
       lines.forEach(function(l,i){if(l.indexOf('#EXT-X-MEDIA:')===0){var a=attrs(l);if(a.TYPE==='SUBTITLES' && a.URI && a.FORCED!=='YES')tracks.push({a:a,index:i,url:absolute(a.URI,u)});}});
-      var english=tracks.filter(function(t){return /^en(?:-|$)/i.test(t.a.LANGUAGE || '');}),groups={},aiCount=0,externalCount=0;
+      await choose(plan,tracks);
+      var groups={},aiCount=0,externalCount=0;
       tracks.forEach(function(t){groups[t.a['GROUP-ID']]=true;});
-      // Sources belong to the manifestation, never to the last visited episode.
       plan.aiSources=plan.aiSources || [];
-      Object.keys(groups).forEach(function(g){
-        var candidates=english.filter(function(t){return t.a['GROUP-ID']===g;});
-        candidates.sort(function(a,b){return Number(/CC/i.test(a.a.NAME || ''))-Number(/CC/i.test(b.a.NAME || ''));});
-        if(candidates.length && args.Mode!=='External'){
-          var source=candidates[0].url,slot=plan.aiSources.indexOf(source);if(slot<0){slot=plan.aiSources.length;plan.aiSources.push(source);}
-          addTrack(lines,g,'AI 翻译','zh-Hans-x-ai',virtual(plan,'ai',slot));aiCount++;
-        }
-        if(plan.external && args.Mode!=='AI'){addTrack(lines,g,'外部字幕','zh-Hans-x-external',virtual(plan,'external',0));externalCount++;}
-      });
-      plan.templateSource=(english[0] || tracks[0] || {}).url || '';
-      if(!tracks.length && plan.external && args.Mode!=='AI'){
-        addTrack(lines,'hbo-ai','外部字幕','zh-Hans-x-external',virtual(plan,'external',0));externalCount++;
-        lines=lines.map(function(l){return l.indexOf('#EXT-X-STREAM-INF:')===0?set(l,'SUBTITLES','hbo-ai'):l;});
+      if(plan.selection==='ai'){
+        var slot=plan.aiSources.indexOf(plan.selectedSource);if(slot<0){slot=plan.aiSources.length;plan.aiSources.push(plan.selectedSource);}
+        plan.aiLanguages=plan.aiLanguages || {};plan.aiLanguages[slot]=plan.sourceLanguage;
+        Object.keys(groups).forEach(function(g){addTrack(lines,g,'AI 翻译','zh-Hans-x-ai',virtual(plan,'ai',slot));aiCount++;});
+      }else if(plan.selection==='external'){
+        if(!tracks.length){groups['hbo-ai']=true;lines=lines.map(function(l){return l.indexOf('#EXT-X-STREAM-INF:')===0?set(l,'SUBTITLES','hbo-ai'):l;});}
+        Object.keys(groups).forEach(function(g){addTrack(lines,g,'外部字幕','zh-Hans-x-external',virtual(plan,'external',0));externalCount++;});
       }
+      var latest=read();latest.plans[id]=plan;s=latest;
       save(s);return done({body:lines.join('\n'),headers:Object.assign({},$response.headers,{'X-HBO-AI-Tracks':'ai='+aiCount+'; external='+externalCount})});
     }
     done();

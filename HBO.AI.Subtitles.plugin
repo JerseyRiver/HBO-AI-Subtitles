@@ -1,38 +1,28 @@
 #!name = HBO AI Subtitles
-#!desc = HBO Max 独立字幕选项：AI 翻译、VPS 外部字幕，保留原英文。支持整合旧最高画质逻辑。实验版。
+#!desc = HBO Max 字幕：官方中文优先，可获取字幕时 AI 翻译，否则 VPS 外部字幕；每次只添加一种选项。
 #!author = JerseyRiver
 #!homepage = https://github.com/JerseyRiver/HBO-AI-Subtitles
-#!version = 0.3.0
+#!version = 0.4.0
 #!date = 2026-10-09
 #!system = iOS,iPadOS
 
 [Argument]
 QualityCompatibility = switch,false,tag=保留旧最高画质逻辑,desc=原来使用 HBO iPad Highest Quality 时可开启；此时停用旧最高画质插件，避免规则抢先匹配。
-Mode = select,"Both","AI","External",tag=新增字幕选项,desc=Both 添加独立 AI 翻译与外部字幕。保留原英文轨；外部字幕需网关和自动影片信息。
-Vendor = input,"Gemini",tag=翻译器,desc=使用 Gemini。
 GeminiAPIKey = input,"",tag=Gemini API Key,desc=填写自己的 Key。
 GeminiModel = input,"gemini-3.5-flash-lite",tag=Gemini 模型,desc=填写账号可用的精确模型 ID。
-GeminiBatchSize = select,"400","300","600",tag=每批条数,desc=较大批次需要较长等待。
-Languages[0] = input,"EN",tag=源语言,desc=此插件仅翻译识别出的完整英文轨。
 Languages[1] = select,"ZH","ZH-HANS","ZH-HANT",tag=翻译目标语言,desc=设备端 Gemini 翻译的目标语言；网关外部字幕为简体中文。
 Position = select,"Reverse","Forward",tag=双语位置,desc=Reverse 译文在上原文在下。
 ShowOnly = switch,false,tag=只显示译文,desc=设备端翻译可保留中英双语。
-LogLevel = select,"WARN","OFF","ERROR","INFO",tag=日志等级,desc=建议保持 WARN。
 GatewayURL = input,"",tag=外部字幕网关,desc=共用升级后的 AppleTV VPS。填写 https://域名/v1/令牌；留空禁用。
-Title = input,"",tag=外部字幕片名,desc=可留空，自动从 HBO 详情读取。仅自动识别失败时用于手动回退。
-Year = input,"",tag=年份,desc=电影发行年份或剧集首播年份。
-MediaType = select,"movie","tv",tag=影片类型,desc=剧集选 tv 并填写季集。
-Season = input,"",tag=季数,desc=仅手动回退时填写。
-Episode = input,"",tag=集数,desc=仅手动回退时填写；自动识别会随播放 ID 匹配季集。
 OffsetSeconds = input,"0",tag=外部字幕校时秒数,desc=正数延后负数提前。仅对外部字幕生效；不会自动冒用 Apple 的 CC 校时。
 
 [Script]
 http-request ^https:\/\/default\.any-any\.prd\.api\.discomax\.com\/playback-orchestrator\/any\/playback-orchestrator\/v1\/playbackInfo(?:\?|$) script-path=https://raw.githubusercontent.com/JerseyRiver/HBO-AI-Subtitles/main/scripts/HBO.Playback.request.js, requires-body=1, timeout=10, tag=HBO Optional Quality Request, argument=[{QualityCompatibility}]
-http-request ^https:\/\/(?:[^\/?#]+\.e\.hbo|[^\/?#]+\.media\.max\.com|[^\/?#]+\.media\.h264\.io)\/__hbo_ai__\/[a-f0-9-]{36}\/ai\/\d+\/seg-\d+\.vtt(?:\?|$) script-path=https://raw.githubusercontent.com/JerseyRiver/HBO-AI-Subtitles/main/scripts/HBO.Translate.response.bundle.js, timeout=60, tag=HBO Independent AI Translate, argument=[{Vendor},{GeminiAPIKey},{GeminiModel},{GeminiBatchSize},{Languages[0]},{Languages[1]},{Position},{ShowOnly},{LogLevel}]
-http-request ^https:\/\/(?:[^\/?#]+\.e\.hbo|[^\/?#]+\.media\.max\.com|[^\/?#]+\.media\.h264\.io)\/__hbo_ai__\/[a-f0-9-]{36}\/(?:ai|external)\/\d+\/playlist\.m3u8(?:\?|$) script-path=https://raw.githubusercontent.com/JerseyRiver/HBO-AI-Subtitles/main/scripts/HBO.Subtitles.js, timeout=20, tag=HBO Independent Subtitle Playlist, argument=[{Mode},{GatewayURL},{Title},{Year},{MediaType},{Season},{Episode},{OffsetSeconds},{QualityCompatibility}]
-http-response ^https:\/\/default\.[a-z0-9-]+\.prd\.api\.discomax\.com\/cms\/ script-path=https://raw.githubusercontent.com/JerseyRiver/HBO-AI-Subtitles/main/scripts/HBO.Compatible.response.js, requires-body=1, timeout=10, tag=HBO Metadata, argument=[{Mode},{GatewayURL},{Title},{Year},{MediaType},{Season},{Episode},{OffsetSeconds},{QualityCompatibility}]
-http-response ^https:\/\/default\.any-any\.prd\.api\.discomax\.com\/playback-orchestrator\/any\/playback-orchestrator\/v1\/playbackInfo(?:\?|$) script-path=https://raw.githubusercontent.com/JerseyRiver/HBO-AI-Subtitles/main/scripts/HBO.Compatible.response.js, requires-body=1, timeout=10, tag=HBO Playback Options, argument=[{Mode},{GatewayURL},{Title},{Year},{MediaType},{Season},{Episode},{OffsetSeconds},{QualityCompatibility}]
-http-response ^https:\/\/(?:[^\/?#]+\.e\.hbo|[^\/?#]+\.media\.max\.com|[^\/?#]+\.media\.h264\.io)\/[^?#]+\.m3u8(?:\?|$) script-path=https://raw.githubusercontent.com/JerseyRiver/HBO-AI-Subtitles/main/scripts/HBO.Compatible.response.js, requires-body=1, timeout=30, tag=HBO HLS Options and Quality, argument=[{Mode},{GatewayURL},{Title},{Year},{MediaType},{Season},{Episode},{OffsetSeconds},{QualityCompatibility}]
+http-request ^https:\/\/(?:[^\/?#]+\.e\.hbo|[^\/?#]+\.media\.max\.com|[^\/?#]+\.media\.h264\.io)\/__hbo_ai__\/[a-f0-9-]{36}\/ai\/\d+\/seg-\d+\.vtt(?:\?|$) script-path=https://raw.githubusercontent.com/JerseyRiver/HBO-AI-Subtitles/main/scripts/HBO.Translate.response.bundle.js, timeout=60, tag=HBO Independent AI Translate, argument=[{GeminiAPIKey},{GeminiModel},{Languages[1]},{Position},{ShowOnly}]
+http-request ^https:\/\/(?:[^\/?#]+\.e\.hbo|[^\/?#]+\.media\.max\.com|[^\/?#]+\.media\.h264\.io)\/__hbo_ai__\/[a-f0-9-]{36}\/(?:ai|external)\/\d+\/playlist\.m3u8(?:\?|$) script-path=https://raw.githubusercontent.com/JerseyRiver/HBO-AI-Subtitles/main/scripts/HBO.Subtitles.js, timeout=20, tag=HBO Independent Subtitle Playlist, argument=[{GatewayURL},{OffsetSeconds},{QualityCompatibility}]
+http-response ^https:\/\/default\.[a-z0-9-]+\.prd\.api\.discomax\.com\/cms\/ script-path=https://raw.githubusercontent.com/JerseyRiver/HBO-AI-Subtitles/main/scripts/HBO.Compatible.response.js, requires-body=1, timeout=10, tag=HBO Metadata, argument=[{GatewayURL},{OffsetSeconds},{QualityCompatibility}]
+http-response ^https:\/\/default\.any-any\.prd\.api\.discomax\.com\/playback-orchestrator\/any\/playback-orchestrator\/v1\/playbackInfo(?:\?|$) script-path=https://raw.githubusercontent.com/JerseyRiver/HBO-AI-Subtitles/main/scripts/HBO.Compatible.response.js, requires-body=1, timeout=20, tag=HBO Playback Options, argument=[{GatewayURL},{OffsetSeconds},{QualityCompatibility}]
+http-response ^https:\/\/(?:[^\/?#]+\.e\.hbo|[^\/?#]+\.media\.max\.com|[^\/?#]+\.media\.h264\.io)\/[^?#]+\.m3u8(?:\?|$) script-path=https://raw.githubusercontent.com/JerseyRiver/HBO-AI-Subtitles/main/scripts/HBO.Compatible.response.js, requires-body=1, timeout=30, tag=HBO HLS Options and Quality, argument=[{GatewayURL},{OffsetSeconds},{QualityCompatibility}]
 
 [MITM]
 hostname = default.*.prd.api.discomax.com, *.e.hbo, *.media.max.com, *.media.h264.io
