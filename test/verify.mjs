@@ -9,8 +9,8 @@ const playlist=origin+'/gcs/'+id+'/hlsMedia.m3u8?track=en&signature=keep';
 const vtt=origin+'/gcs/'+id+'/t/en/t0/1.vtt';
 const native='#EXTM3U\n#EXT-X-TARGETDURATION:900\n#EXTINF:12.012,\n/public/static/empty.vtt\n#EXT-X-DISCONTINUITY\n#EXTINF:63.063,\n/public/static/empty.vtt\n#EXT-X-DISCONTINUITY\n#EXTINF:900,\nt/en/t0/1.vtt\n#EXTINF:1200,\nt/en/t0/2.vtt\n#EXT-X-ENDLIST\n';
 const args={GatewayURL:'https://gateway.example/v1/token',Title:'Example',MediaType:'movie',Mode:'Auto'};
-async function run({url,body,argument=args,code=script,request=false,status=200,get,post,store=storage}){
- let resolve;const done=new Promise(r=>resolve=r);const context=vm.createContext({setTimeout,clearTimeout,crypto:globalThis.crypto,console:{log(){},warn(){},error(){}},$loon:{},$script:{startTime:Date.now()},$request:{url,headers:{}},...(!request?{$response:{status,headers:{'Content-Type':'text/vtt'},body}}:{}),$argument:argument,$persistentStore:{read:k=>store.get(k)||null,write:(v,k)=>(store.set(k,v),true)},$httpClient:{get:get || ((r,cb)=>cb(null,{status:200},native)),post:post || (()=>assert.fail('Unexpected Gemini request'))},$done:resolve});
+async function run({url,body,argument=args,code=script,request=false,requestBody="",status=200,get,post,store=storage}){
+ let resolve;const done=new Promise(r=>resolve=r);const context=vm.createContext({setTimeout,clearTimeout,crypto:globalThis.crypto,console:{log(){},warn(){},error(){}},$loon:{},$script:{startTime:Date.now()},$request:{url,headers:{},body:requestBody},...(!request?{$response:{status,headers:{'Content-Type':'text/vtt'},body}}:{}),$argument:argument,$persistentStore:{read:k=>store.get(k)||null,write:(v,k)=>(store.set(k,v),true)},$httpClient:{get:get || ((r,cb)=>cb(null,{status:200},native)),post:post || (()=>assert.fail('Unexpected Gemini request'))},$done:resolve});
  vm.runInContext(code,context);let timer;try{return await Promise.race([done,new Promise((_,reject)=>timer=setTimeout(()=>reject(new Error('timeout')),3000))]);}finally{clearTimeout(timer);}
 }
 function playback(){return JSON.stringify({manifest:{format:'hls',url:master},videos:[{type:'promo',start:0,duration:12.012,manifestationId:'00000000-0000-0000-0000-000000000001'},{type:'promo',start:12.012,duration:63.063,manifestationId:'00000000-0000-0000-0000-000000000002'},{type:'main',start:75.075,duration:2100,manifestationId:id}]});}
@@ -35,13 +35,21 @@ assert.ok(result.body.includes('NAME="Bulgarian",URI="bg.m3u8"'));
 result=await run({url:master,body:'#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000\nvideo.m3u8\n'});assert.ok(result.body.startsWith('#EXTM3U\n'));assert.ok(result.body.includes('SUBTITLES="hbo-ai"'));
 // Series without season/episode must not offer the external track.
 await run({url:master,body:main,argument:{...args,MediaType:'tv'}});assert.equal(JSON.parse(storage.get(KEY)).plans[id].external,'');
+// Bind series metadata to each edit, never the last browsed title.
+const cms={data:{type:'route',id:'route'},included:[{type:'show',id:'show',attributes:{originalName:'Example Series',premiereDate:'2025-01-01'}},{type:'video',id:'video2',attributes:{videoType:'episode',seasonNumber:1,episodeNumber:2},relationships:{show:{data:{type:'show',id:'show'}},edit:{data:{type:'edit',id:'edit2'}}}},{type:'video',id:'video3',attributes:{videoType:'episode',seasonNumber:1,episodeNumber:3},relationships:{show:{data:{type:'show',id:'show'}},edit:{data:{type:'edit',id:'edit3'}}}}]};
+await run({url:'https://default.any-emea.prd.api.discomax.com/cms/routes/show/test',body:JSON.stringify(cms)});
+await run({url:playbackURL,body:playback(),requestBody:JSON.stringify({editId:'edit2'}),argument:{GatewayURL:args.GatewayURL}});
+assert.ok(JSON.parse(storage.get(KEY)).plans[id].external.includes('episode=2'));
+assert.ok(JSON.parse(storage.get(KEY)).plans[id].external.includes('title=Example%20Series'));
+await run({url:playbackURL,body:playback(),requestBody:JSON.stringify({editId:'edit3'}),argument:{GatewayURL:args.GatewayURL,Title:'Wrong old movie'}});
+assert.ok(JSON.parse(storage.get(KEY)).plans[id].external.includes('episode=3'));
 // Real HAR replay uses native responses in memory; never emits signed URLs.
 let replay=0, mapped=0;
 for(const file of fs.readdirSync(new URL('../..',import.meta.url)).filter(x=>x.endsWith('.har'))){
- const har=JSON.parse(fs.readFileSync(new URL('../../'+file,import.meta.url),'utf8'));const priority=e=>e.request.url.includes('/playbackInfo')?0:/\/hls\.m3u8/.test(e.request.url)?1:2;const entries=har.log.entries.sort((a,b)=>priority(a)-priority(b));
+ const har=JSON.parse(fs.readFileSync(new URL('../../'+file,import.meta.url),'utf8'));const priority=e=>e.request.url.includes('/cms/')?-1:e.request.url.includes('/playbackInfo')?0:/\/hls\.m3u8/.test(e.request.url)?1:2;const entries=har.log.entries.sort((a,b)=>priority(a)-priority(b));
  const bodies=new Map(entries.map(e=>[e.request.url,decode(e.response.content)]));const replayStore=new Map();
- for(const e of entries){const body=decode(e.response.content);if(!body)continue;const url=e.request.url;if(!url.includes('/playbackInfo') && !/hls(?:Media)?\.m3u8/.test(url))continue;
-  await run({url,body,store:replayStore,argument:{...args,Mode:'Translate'},get:(r,cb)=>cb(null,{status:bodies.has(r.url)?200:404},bodies.get(r.url)||'')});replay++;
+ for(const e of entries){const body=decode(e.response.content);if(!body)continue;const url=e.request.url;if(!url.includes('/cms/') && !url.includes('/playbackInfo') && !/hls(?:Media)?\.m3u8/.test(url))continue;
+  await run({url,body,requestBody:decode(e.request.postData),store:replayStore,argument:{...args,Mode:'Translate'},get:(r,cb)=>cb(null,{status:bodies.has(r.url)?200:404},bodies.get(r.url)||'')});replay++;
  }
  mapped+=Object.keys(JSON.parse(replayStore.get(KEY) || '{}').segments || {}).length;
 }

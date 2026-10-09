@@ -1,6 +1,6 @@
 /* HBO AI Subtitles — JerseyRiver. GPL-3.0-only. Native HLS period handling. */
 (function () {
-  var KEY='HBOAI.Context.v1', finished=false;
+  var KEY='HBOAI.Context.v1', META='HBOAI.Metadata.v1', finished=false;
   var args=typeof $argument==='object' && $argument ? $argument : {};
   function done(v){if(!finished){finished=true;$done(v || {});}}
   function read(){try{return JSON.parse($persistentStore.read(KEY)) || {plans:{},playlists:{},segments:{}};}catch(e){return {plans:{},playlists:{},segments:{}};}}
@@ -19,11 +19,37 @@
   }
   function allowed(u){return /^https:\/\/[^/?#@]+\//.test(u) && /(?:^|\.)(?:e\.hbo|media\.max\.com|media\.h264\.io)$/.test(u.split('/')[2]);}
   function get(u){return new Promise(function(resolve,reject){$httpClient.get({url:u,timeout:12},function(e,r,b){if(e || Number(r && (r.status || r.statusCode))!==200)reject(new Error('subtitle fetch failed'));else resolve(String(b || ''));});});}
+  function metadataCache(){try{return JSON.parse($persistentStore.read(META) || '{}');}catch(e){return {};}}
+  function collectMetadata(document){
+    var nodes=(document.included || []).concat(Array.isArray(document.data)?document.data:[document.data]),index={},cache=metadataCache();
+    nodes.forEach(function(n){if(n && n.type && n.id)index[n.type+':'+n.id]=n;});
+    function related(n,k){var d=n.relationships && n.relationships[k] && n.relationships[k].data;return d && !Array.isArray(d)?index[d.type+':'+d.id]:null;}
+    nodes.forEach(function(n){
+      if(!n || n.type!=='video')return;
+      var a=n.attributes || {},edit=related(n,'edit'),show=related(n,'show'),season=related(n,'season');
+      var relation=n.relationships && n.relationships.edit && n.relationships.edit.data,editId=relation && relation.id;
+      var isEpisode=/episode/i.test(a.videoType || '') || +a.episodeNumber>0;
+      var title=isEpisode?show && (show.attributes.originalName || show.attributes.name):(a.originalName || a.name);
+      if(!editId || typeof title!=='string' || !title.trim())return;
+      var sn=+a.seasonNumber || +(season && season.attributes.seasonNumber),ep=+a.episodeNumber;
+      if(isEpisode && !(sn>0 && ep>0))return;
+      var date=isEpisode?show.attributes.premiereDate:a.airDate,year=String(date || '').match(/(?:18|19|20|21)\d{2}/);
+      cache[editId]={title:title,year:year?year[0]:'',type:isEpisode?'tv':'movie',season:isEpisode?sn:'',episode:isEpisode?ep:'',videoId:n.id,updated:Date.now()};
+    });
+    var keys=Object.keys(cache).sort(function(a,b){return cache[b].updated-cache[a].updated;});keys.slice(120).forEach(function(k){delete cache[k];});
+    $persistentStore.write(JSON.stringify(cache),META);
+  }
+  function mediaFor(plan){
+    var automatic=plan.editId && metadataCache()[plan.editId];
+    if(automatic)return automatic;
+    if(!String(args.Title || '').trim())return null;
+    return {title:String(args.Title).trim(),year:args.Year || '',type:args.MediaType || 'movie',season:args.Season || '',episode:args.Episode || ''};
+  }
   function gateway(plan){
-    var root=String(args.GatewayURL || '').replace(/\/+$/,'');
-    if(!plan.periods || plan.safePeriods===false || !/^https:\/\/[^/?#@]+\/v1\/[^/?#]+$/.test(root) || !String(args.Title || '').trim() || !plan.duration)return '';
-    if(args.MediaType==='tv' && !(+args.Season>0 && +args.Episode>0))return '';
-    var data={title:String(args.Title).trim(),year:args.Year || '',type:args.MediaType || 'movie',season:args.Season || '',episode:args.Episode || '',duration:plan.duration,offset:args.OffsetSeconds || '0'};
+    var root=String(args.GatewayURL || '').replace(/\/+$/,''),media=mediaFor(plan);
+    if(!plan.periods || plan.safePeriods===false || !/^https:\/\/[^/?#@]+\/v1\/[^/?#]+$/.test(root) || !media || !plan.duration)return '';
+    if(media.type==='tv' && !(+media.season>0 && +media.episode>0))return '';
+    var data={title:media.title,year:media.year,type:media.type,season:media.season,episode:media.episode,duration:plan.duration,offset:args.OffsetSeconds || '0'};
     return root+'/hbo/'+plan.id+'/subtitle.vtt?'+Object.keys(data).map(function(k){return encodeURIComponent(k)+'='+encodeURIComponent(data[k]);}).join('&');
   }
   function virtual(plan){return plan.origin+'/__hbo_ai__/'+plan.id+'/playlist.m3u8';}
@@ -56,6 +82,7 @@
       return done({response:{status:200,headers:{'Content-Type':'application/vnd.apple.mpegurl','Cache-Control':'no-store'},body:vp.externalPlaylist || fallbackPeriods(vp)}});
     }
     var body=String($response.body || '');
+    if(/\/cms\//.test(u)){collectMetadata(JSON.parse(body));return done();}
     if(/\/playbackInfo(?:\?|$)/.test(u)){
       var data=JSON.parse(body),mains=(data.videos || []).filter(function(v){return v.type==='main';}),manifest=data.manifest || {};
       if(mains.length!==1 || manifest.format!=='hls' || !allowed(manifest.url))return done();
@@ -63,7 +90,8 @@
       // An insertion inside the main period requires a different mapping; refuse it.
       var periods=(data.videos || []).map(function(v){return {type:v.type,start:v.start,duration:v.duration};});
       var safe=periods.every(function(p,i){return p.duration>0 && p.start>=0 && (!i || Math.abs(p.start-periods[i-1].start-periods[i-1].duration)<0.1);});
-      var plan={id:main.manifestationId.toLowerCase(),master:manifest.url,origin:/^https:\/\/[^/]+/.exec(manifest.url)[0],duration:main.duration,start:main.start,periods:periods,safePeriods:safe,expires:Date.now()+6*3600000};
+      var playbackRequest={};try{playbackRequest=JSON.parse($request.body || '{}');}catch(e){}
+      var plan={editId:playbackRequest.editId || main.editId || '',id:main.manifestationId.toLowerCase(),master:manifest.url,origin:/^https:\/\/[^/]+/.exec(manifest.url)[0],duration:main.duration,start:main.start,periods:periods,safePeriods:safe,expires:Date.now()+6*3600000};
       plan.external=safe?gateway(plan):'';s.plans[plan.id]=plan;save(s);return done();
     }
     if(body.indexOf('#EXTM3U')!==0)return done();

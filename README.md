@@ -1,4 +1,4 @@
-# HBO AI Subtitles · Loon 实验版 0.1.0
+# HBO AI Subtitles · Loon 实验版 0.2.0
 
 这是独立的 HBO Max Loon 插件。设备端复用 AppleTV 插件的 Gemini 翻译逻辑，服务端共用升级后的 Apple 字幕网关。在线插件可直接添加到 Loon，自动下载配套脚本；VPS 仍需按下文升级。
 
@@ -10,7 +10,7 @@
 https://raw.githubusercontent.com/JerseyRiver/HBO-AI-Subtitles/main/HBO.AI.Subtitles.plugin
 ```
 
-[打开在线插件文件](https://raw.githubusercontent.com/JerseyRiver/HBO-AI-Subtitles/main/HBO.AI.Subtitles.plugin) · [下载 ZIP 安装包](https://github.com/JerseyRiver/HBO-AI-Subtitles/releases/download/v0.1.0/HBO-AI-Subtitles.zip) · [VPS 升级说明](SERVER.md)
+[打开在线插件文件](https://raw.githubusercontent.com/JerseyRiver/HBO-AI-Subtitles/main/HBO.AI.Subtitles.plugin) · [下载 ZIP 安装包](https://github.com/JerseyRiver/HBO-AI-Subtitles/releases/download/v0.2.0/HBO-AI-Subtitles.zip) · [VPS 升级说明](SERVER.md)
 
 1. 启用脚本与 MITM，安装并信任证书。在线插件会自动下载脚本，无需手动放置 JS。
 2. 填写自己的 `GeminiAPIKey` 和账号可用的 `GeminiModel`。设备端翻译不需要 VPS。
@@ -26,14 +26,11 @@ https://raw.githubusercontent.com/JerseyRiver/HBO-AI-Subtitles/main/HBO.AI.Subti
 
 先按 [服务器升级说明](SERVER.md) 将现有服务的 `app.py` 升级到 0.12.0。两个插件可以填写同一个 `GatewayURL=https://域名/v1/令牌`；SubDL、Gemini Key、端口和 systemd 服务共用。
 
-在 HBO 插件填写：
+正常使用只需在 Loon 插件中配置 `GeminiAPIKey` 和可选的 `GatewayURL`。网关地址与 AppleTV 相同，可直接从现有 AppleTV 插件参数复制；不要填 VPS 登录密码、SubDL Key 或 SSH 信息。
 
-- `Title`：电影英文原名，或剧集的英文剧名（不是单集标题）。
-- `Year`：电影发行年份或剧集首播年份。
-- `MediaType=tv` 时必须填写 `Season`、`Episode`。换片、换集必须更新这些参数并重新进入播放。
-- `OffsetSeconds`：外部字幕偏移秒数，正数延后、负数提前。
+插件读取 HBO `/cms/` 的影片/剧集详情，将 `video → edit` 和 `video → show` 关系关联到播放请求的 `editId`，自动获取电影原名或剧名、年份、季集。首次安装后应退出重进 App，并先打开影片详情再播放，让 Loon 读取相关详情请求。自动元数据优先于旧手动参数，换集按新的 editId 匹配。
 
-这几份 HAR 只有播放与 CDN 信息，没有可验证的详情页片名、季集映射。**当前不会从 UUID 猜片名，也不会自动识别换集**。手动参数填错仍可能匹配到另一集，这是本版需要用户核对的部分。
+`Title/Year/MediaType/Season/Episode` 现在均是可选的手动回退参数，正常情况下留空。若 App 没有发出可读的详情响应，或详情关联不完整，插件不会猜片名或借用上一次浏览的影片；这时仍可直接翻译英文，但外部字幕需补充元数据或重新进入详情页。`OffsetSeconds` 仅用于外部字幕校时，正数延后、负数提前。
 
 英文轨请求返回错误页、空响应或不含有效 cue 的文本时，且已配置网关和完整影片信息，尝试请求对应时间窗口的外部字幕。有字幕轨但其上游请求完全超时、没有进入 Loon 响应脚本时，这条自动回退无法执行：改用 `External` 并重新进入影片。
 
@@ -53,11 +50,11 @@ https://raw.githubusercontent.com/JerseyRiver/HBO-AI-Subtitles/main/HBO.AI.Subti
 
 ## 缓存与数据
 
-设备端翻译使用独立 `HBOAI` 命名空间，最多 20 份成品；播放上下文键为 `HBOAI.Context.v1`，包含临时签名 URL、网关字幕 URL 和手动影片信息，6 小时到期后在后续请求中清理。停用插件不会立即擦除存储，清理需删除相应键。
+设备端翻译使用独立 `HBOAI` 命名空间，最多 20 份成品；播放上下文键为 `HBOAI.Context.v1`，包含临时签名 URL、网关字幕 URL 和自动或手动影片信息，6 小时到期后在后续请求中清理。停用插件不会立即擦除存储，清理需删除相应键。
 
 服务器缓存使用 `hbo-{manifestationId}-{影片参数摘要}` 目录，Apple 原来的数字 ID 目录保留。平台、季集、片长或手动片名不同不会共用成品；整季字幕包会按 SxxEyy/1x02 文件名选择目标集，无法确认时跳过；换偏移只改变返回窗口，不重翻译。仍使用同一 `MAX_CACHE_ENTRIES` 总量上限。
 
-Gemini 会接收字幕文本；网关会收到手动影片信息，向 SubDL 搜索及下载字幕。插件不上传 HBO 登录头、cookie 或 DRM 许可证，也不把 HBO 视频流交给服务器。不要分享 Loon 参数、持久存储或原始 HAR。
+Gemini 会接收字幕文本；网关会收到自动或手动影片信息，向 SubDL 搜索及下载字幕。插件不上传 HBO 登录头、cookie 或 DRM 许可证，也不把 HBO 视频流交给服务器。自动详情元数据保存在 `HBOAI.Metadata.v1`，最多保留 120 个 editId 映射。不要分享 Loon 参数、持久存储或原始 HAR。
 
 ## 开发和验证
 
@@ -72,7 +69,7 @@ npm run test:server
 
 如果仓库上一级目录存在自己的 `.har` 文件，测试会额外执行抓包回放；公开仓库和 ZIP 不含抓包，默认仅执行合成测试。
 
-测试包括三份本地 HAR 的 45 个 HLS/播放响应回放，以及合成的英文翻译、403 网关回退、官方中文、无字幕轨、时间窗口、平台缓存和令牌遮盖。没有调用真实 Gemini/SubDL API，不消耗额度。抓包回放不代表真实设备成功播放。
+测试包括三份本地 HAR 的 45 个 HLS/播放响应回放，以及详情元数据按 editId 自动关联、换集及合成的英文翻译、403 网关回退、官方中文、无字幕轨、时间窗口、平台缓存和令牌遮盖。没有调用真实 Gemini/SubDL API，不消耗额度。抓包回放不代表真实设备成功播放。
 
 插件组合发行遵循 GPL-3.0-only，保留 DualSubs 与依赖声明；网关独立遵循 Apache-2.0。详见 `LICENSE`、`NOTICE` 和 `scripts/LICENSES.txt`。
 

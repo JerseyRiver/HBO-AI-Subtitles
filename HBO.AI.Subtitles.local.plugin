@@ -1,7 +1,7 @@
 #!name = HBO AI Subtitles
 #!desc = HBO Max 字幕：英文/CC 的 Gemini 翻译、独立缓存、共用 AppleTV VPS 外部字幕。默认保留官方中文；字幕需手动选择。实验版。
 #!author = JerseyRiver
-#!version = 0.1.0
+#!version = 0.2.0
 #!date = 2026-10-09
 #!system = iOS,iPadOS
 
@@ -17,18 +17,19 @@ Position = select,"Reverse","Forward",tag=双语位置,desc=Reverse 译文在上
 ShowOnly = switch,false,tag=只显示译文,desc=设备端翻译可保留中英双语。
 LogLevel = select,"WARN","OFF","ERROR","INFO",tag=日志等级,desc=建议保持 WARN。
 GatewayURL = input,"",tag=外部字幕网关,desc=共用升级后的 AppleTV VPS。填写 https://域名/v1/令牌；留空禁用。
-Title = input,"",tag=外部字幕片名,desc=电影英文原名或剧集英文剧名。当前抓包无详情元数据故需填写；换片必须更新。
+Title = input,"",tag=外部字幕片名,desc=可留空，自动从 HBO 详情读取。仅自动识别失败时用于手动回退。
 Year = input,"",tag=年份,desc=电影发行年份或剧集首播年份。
 MediaType = select,"movie","tv",tag=影片类型,desc=剧集选 tv 并填写季集。
-Season = input,"",tag=季数,desc=剧集必填。
-Episode = input,"",tag=集数,desc=剧集必填；每次换集需更新。
+Season = input,"",tag=季数,desc=仅手动回退时填写。
+Episode = input,"",tag=集数,desc=仅手动回退时填写；自动识别会随播放 ID 匹配季集。
 OffsetSeconds = input,"0",tag=外部字幕校时秒数,desc=正数延后负数提前。仅对外部字幕生效；不会自动冒用 Apple 的 CC 校时。
 
 [Script]
+http-response ^https:\/\/default\.[a-z0-9-]+\.prd\.api\.discomax\.com\/cms\/ script-path=HBO.Subtitles.js, requires-body=1, timeout=10, tag=HBO AI Metadata
 http-request ^https:\/\/(?:[^\/?#]+\.e\.hbo|[^\/?#]+\.media\.max\.com|[^\/?#]+\.media\.h264\.io)\/__hbo_ai__\/[a-f0-9-]{36}\/playlist\.m3u8(?:\?|$) script-path=HBO.Subtitles.js, timeout=10, tag=HBO AI Virtual Playlist, argument=[{Mode},{GatewayURL},{Title},{Year},{MediaType},{Season},{Episode},{OffsetSeconds}]
 http-response ^https:\/\/default\.any-any\.prd\.api\.discomax\.com\/playback-orchestrator\/any\/playback-orchestrator\/v1\/playbackInfo(?:\?|$) script-path=HBO.Subtitles.js, requires-body=1, timeout=10, tag=HBO AI Playback Context, argument=[{Mode},{GatewayURL},{Title},{Year},{MediaType},{Season},{Episode},{OffsetSeconds}]
 http-response ^https:\/\/(?:[^\/?#]+\.e\.hbo|[^\/?#]+\.media\.max\.com|[^\/?#]+\.media\.h264\.io)\/[^?#]+\.m3u8(?:\?|$) script-path=HBO.Subtitles.js, requires-body=1, timeout=20, tag=HBO AI HLS Subtitles, argument=[{Mode},{GatewayURL},{Title},{Year},{MediaType},{Season},{Episode},{OffsetSeconds}]
 http-response ^https:\/\/(?:[^\/?#]+\.e\.hbo|[^\/?#]+\.media\.max\.com|[^\/?#]+\.media\.h264\.io)\/[^?#]+\.(?:vtt|webvtt)(?:\?|$) script-path=HBO.Translate.response.bundle.js, requires-body=1, timeout=60, tag=HBO AI Translate, argument=[{Vendor},{GeminiAPIKey},{GeminiModel},{GeminiBatchSize},{Languages[0]},{Languages[1]},{Position},{ShowOnly},{LogLevel}]
 
 [MITM]
-hostname = default.any-any.prd.api.discomax.com, *.e.hbo, *.media.max.com, *.media.h264.io
+hostname = default.*.prd.api.discomax.com, *.e.hbo, *.media.max.com, *.media.h264.io
