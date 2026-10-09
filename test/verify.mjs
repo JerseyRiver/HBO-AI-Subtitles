@@ -45,7 +45,7 @@ await run({url:playbackURL,body:playback(),requestBody:JSON.stringify({editId:'e
 assert.ok(JSON.parse(storage.get(KEY)).plans[id].external.includes('episode=3'));
 // Real HAR replay uses native responses in memory; never emits signed URLs.
 let replay=0, mapped=0;
-for(const file of fs.readdirSync(new URL('../..',import.meta.url)).filter(x=>x.endsWith('.har'))){
+for(const file of (process.env.HBO_SKIP_HAR ? [] : fs.readdirSync(new URL('../..',import.meta.url)).filter(x=>x.endsWith('.har')))){
  const har=JSON.parse(fs.readFileSync(new URL('../../'+file,import.meta.url),'utf8'));const priority=e=>e.request.url.includes('/cms/')?-1:e.request.url.includes('/playbackInfo')?0:/\/hls\.m3u8/.test(e.request.url)?1:2;const entries=har.log.entries.sort((a,b)=>priority(a)-priority(b));
  const bodies=new Map(entries.map(e=>[e.request.url,decode(e.response.content)]));const replayStore=new Map();
  for(const e of entries){const body=decode(e.response.content);if(!body)continue;const url=e.request.url;if(!url.includes('/cms/') && !url.includes('/playbackInfo') && !/hls(?:Media)?\.m3u8/.test(url))continue;
@@ -62,6 +62,8 @@ for(const line of plugin.split('\n').filter(x=>/^http-(?:request|response) /.tes
 assert.ok(new RegExp(plugin.split('\n').find(x=>x.startsWith('http-request ')).split(' ')[1]).test(virtual));
 for(const name of ['HBO.AI.Subtitles.plugin','HBO.AI.Subtitles.local.plugin']){
  const text=fs.readFileSync(new URL('../'+name,import.meta.url),'utf8');
+ assert.ok(!text.includes('Metadata\\nhttp'), 'Script rules must use real newlines');
+ assert.equal(text.split('\n').filter(l=>/^http-(request|response) /.test(l)).length,5);
  for(const match of text.matchAll(/script-path=([^,\s]+)/g)){
   const path=match[1].startsWith('https:')?match[1].split('/main/')[1]:'scripts/'+match[1];
   assert.ok(fs.existsSync(new URL('../'+path,import.meta.url)), 'Missing plugin script');

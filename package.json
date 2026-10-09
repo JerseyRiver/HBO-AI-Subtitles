@@ -1,6 +1,6 @@
 {
   "name": "hbo-ai-subtitles",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "type": "module",
   "description": "HBO Max subtitles for Loon: Gemini translation and a shared subtitle gateway",

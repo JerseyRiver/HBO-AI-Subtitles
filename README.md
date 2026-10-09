@@ -1,4 +1,4 @@
-# HBO AI Subtitles · Loon 实验版 0.2.0
+# HBO AI Subtitles · Loon 实验版 0.2.1
 
 这是独立的 HBO Max Loon 插件。设备端复用 AppleTV 插件的 Gemini 翻译逻辑，服务端共用升级后的 Apple 字幕网关。在线插件可直接添加到 Loon，自动下载配套脚本；VPS 仍需按下文升级。
 
@@ -10,7 +10,7 @@
 https://raw.githubusercontent.com/JerseyRiver/HBO-AI-Subtitles/main/HBO.AI.Subtitles.plugin
 ```
 
-[打开在线插件文件](https://raw.githubusercontent.com/JerseyRiver/HBO-AI-Subtitles/main/HBO.AI.Subtitles.plugin) · [下载 ZIP 安装包](https://github.com/JerseyRiver/HBO-AI-Subtitles/releases/download/v0.2.0/HBO-AI-Subtitles.zip) · [VPS 升级说明](SERVER.md)
+[打开在线插件文件](https://raw.githubusercontent.com/JerseyRiver/HBO-AI-Subtitles/main/HBO.AI.Subtitles.plugin) · [下载 ZIP 安装包](https://github.com/JerseyRiver/HBO-AI-Subtitles/releases/download/v0.2.1/HBO-AI-Subtitles.zip) · [VPS 升级说明](SERVER.md)
 
 1. 启用脚本与 MITM，安装并信任证书。在线插件会自动下载脚本，无需手动放置 JS。
 2. 填写自己的 `GeminiAPIKey` 和账号可用的 `GeminiModel`。设备端翻译不需要 VPS。

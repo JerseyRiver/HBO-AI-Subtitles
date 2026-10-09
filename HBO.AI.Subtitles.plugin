@@ -2,7 +2,7 @@
 #!desc = HBO Max 字幕：英文/CC 的 Gemini 翻译、独立缓存、共用 AppleTV VPS 外部字幕。默认保留官方中文；字幕需手动选择。实验版。
 #!author = JerseyRiver
 #!homepage = https://github.com/JerseyRiver/HBO-AI-Subtitles
-#!version = 0.2.0
+#!version = 0.2.1
 #!date = 2026-10-09
 #!system = iOS,iPadOS
 
