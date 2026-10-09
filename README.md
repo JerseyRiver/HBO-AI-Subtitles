@@ -1,5 +1,7 @@
 # HBO AI Subtitles · Loon 0.4.1
 
+<img src="icons/hbo-ai.png" width="80" alt="HBO AI Subtitles 图标">
+
 ## Loon 订阅地址
 
 点击下面代码框右上角的复制按钮，然后粘贴到 **Loon → 插件 → 添加插件**。

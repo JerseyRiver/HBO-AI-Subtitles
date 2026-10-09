@@ -1,6 +1,7 @@
 #!name = HBO AI Subtitles
 #!desc = HBO Max 字幕：官方中文优先，可获取字幕时 AI 翻译，否则 VPS 外部字幕；每次只添加一种选项。
 #!author = JerseyRiver
+#!icon = https://raw.githubusercontent.com/JerseyRiver/HBO-AI-Subtitles/main/icons/hbo-ai.png
 #!version = 0.4.1
 #!date = 2026-10-09
 #!system = iOS,iPadOS
