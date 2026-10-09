@@ -1,5 +1,15 @@
 # HBO AI Subtitles · Loon 0.4.0
 
+## Loon 订阅地址
+
+点击下面代码框右上角的复制按钮，然后粘贴到 **Loon → 插件 → 添加插件**。
+
+```text
+https://raw.githubusercontent.com/JerseyRiver/HBO-AI-Subtitles/main/HBO.AI.Subtitles.plugin
+```
+
+[打开插件文件](https://raw.githubusercontent.com/JerseyRiver/HBO-AI-Subtitles/main/HBO.AI.Subtitles.plugin) · [下载最新版 ZIP](https://github.com/JerseyRiver/HBO-AI-Subtitles/releases/latest)
+
 为 HBO Max 添加独立字幕选项，保留原英文及官方字幕：有完整官方中文时不添加选项；无中文且可提取字幕时只添加 **AI 翻译**；提取失败时只添加 **外部字幕**，后者需要配置网关并自动识别影片信息。翻译仍按播放器请求的字幕段进行，首次跳到未翻译段需要等待，已翻译段使用缓存。
 
 ## 安装
