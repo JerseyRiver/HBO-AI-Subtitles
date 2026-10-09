@@ -29,7 +29,7 @@ const cnPlayback=JSON.parse(playback());cnPlayback.videos[1].textTracks.push({la
 const cn=await run({url:playbackURL,body:JSON.stringify(cnPlayback),store:new Map(),get:()=>assert.fail('Official Chinese should bypass probes')});assert.equal(JSON.parse(cn.body).videos[1].textTracks.length,2);
 const second=await run({url:master,body:response.body});assert.equal((second.body.match(/NAME="AI 翻译"/g) || []).length,1,'Do not duplicate injected tracks');
 const aiList=origin+'/__hbo_ai__/'+id+'/ai/0/playlist.m3u8',externalList=origin+'/__hbo_ai__/'+id+'/external/0/playlist.m3u8';
-response=await run({url:aiList,request:true});assert.equal(response.response.status,200);assert.ok(response.response.body.includes('/public/static/empty.vtt'));const aiSegment=origin+'/__hbo_ai__/'+id+'/ai/0/seg-0.vtt';assert.equal(JSON.parse(storage.get(KEY)).segments[aiSegment].source,nativeVTT);
+response=await run({url:aiList,request:true});assert.equal(response.response.status,200);assert.equal(response.response.headers['X-HBO-AI-Version'],'0.4.1');assert.ok(response.response.body.includes('/public/static/empty.vtt'));const aiSegment=origin+'/__hbo_ai__/'+id+'/ai/0/seg-0.vtt';assert.equal(JSON.parse(storage.get(KEY)).segments[aiSegment].source,nativeVTT);
 // A master refresh must not erase the existing AI segment registration.
 await run({url:master,body:main});assert.ok(JSON.parse(storage.get(KEY)).segments[aiSegment]);
 let apiCalls=0;
@@ -103,7 +103,7 @@ for(const file of files){const har=JSON.parse(fs.readFileSync(file.startsWith('/
 function decode(c={}){return c.encoding==='base64'?Buffer.from(c.text||'','base64').toString():c.text||'';}
 for(const name of ['HBO.AI.Subtitles.plugin','HBO.AI.Subtitles.local.plugin']){const text=read(name);assert.equal(text.split('\n').filter(l=>/^http-(request|response) /.test(l)).length,6);assert.ok(!text.includes('Metadata\\nhttp'));
  for(const line of text.split('\n').filter(l=>/^http-/.test(l))){new RegExp(line.split(' ')[1]);}
- for(const match of text.matchAll(/script-path=([^,\s]+)/g)){const file=match[1].startsWith('https:')?match[1].split('/main/')[1]:'scripts/'+match[1];assert.ok(fs.existsSync(new URL('../'+file,import.meta.url)));}
+ for(const match of text.matchAll(/script-path=([^,\s]+)/g)){const file=match[1].startsWith('https:')?'scripts/'+match[1].split('/scripts/')[1]:'scripts/'+match[1];assert.ok(fs.existsSync(new URL('../'+file,import.meta.url)));}
  assert.ok(!text.split('\n').some(l=>l.startsWith('http-response') && l.includes('(?:vtt|webvtt)')),'Native English VTT must remain untouched');
 }
 console.log(`Independent AI/external options, original English, refresh/episode isolation, direct AI requests, quality integration passed; ${replay} HAR responses, ${aiTracks} rewritten masters.`);

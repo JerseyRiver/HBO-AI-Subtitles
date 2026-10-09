@@ -8,7 +8,7 @@ await apply((function($request,$response,$argument,$done){
 (function () {
   var KEY='HBOAI.Context.v1', META='HBOAI.Metadata.v1', finished=false;
   var args=typeof $argument==='object' && $argument ? $argument : {};
-  function done(v){if(!finished){finished=true;$done(v || {});}}
+  function done(v){if(!finished){finished=true;v=v || {};if(v.response)v.response.headers=Object.assign({},v.response.headers,{'X-HBO-AI-Version':'0.4.1'});else if(v.body)v.headers=Object.assign({},v.headers,{'X-HBO-AI-Version':'0.4.1'});$done(v);}}
   function read(){try{return JSON.parse($persistentStore.read(KEY)) || {plans:{},playlists:{},segments:{}};}catch(e){return {plans:{},playlists:{},segments:{}};}}
   function save(s){
     Object.keys(s.plans).forEach(function(k){if(s.plans[k].expires<Date.now())delete s.plans[k];});

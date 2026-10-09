@@ -9,5 +9,5 @@ export default defineConfig({
   } },
   entry: { 'HBO.Translate.response': './src/Translate.response.js' },
   output: { path: path.resolve('scripts'), chunkFormat: false, filename: '[name].bundle.js', library: { type: 'module' } },
-  plugins: [new NodePolyfillPlugin(), new rspack.BannerPlugin({ banner: 'HBO AI Subtitles 0.4.0 — JerseyRiver. GPL-3.0-only.\nAdapted from AppleTV AI Subtitles / DualSubs Universal (VirgilClyne).\nFull third-party licenses: LICENSES.txt and NOTICE in the distribution.' })], devtool: false, performance: false,
+  plugins: [new NodePolyfillPlugin(), new rspack.BannerPlugin({ banner: 'HBO AI Subtitles 0.4.1 — JerseyRiver. GPL-3.0-only.\nAdapted from AppleTV AI Subtitles / DualSubs Universal (VirgilClyne).\nFull third-party licenses: LICENSES.txt and NOTICE in the distribution.' })], devtool: false, performance: false,
 });

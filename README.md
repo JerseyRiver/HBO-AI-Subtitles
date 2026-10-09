@@ -1,4 +1,4 @@
-# HBO AI Subtitles · Loon 0.4.0
+# HBO AI Subtitles · Loon 0.4.1
 
 ## Loon 订阅地址
 
@@ -14,17 +14,17 @@ https://raw.githubusercontent.com/JerseyRiver/HBO-AI-Subtitles/main/HBO.AI.Subti
 
 ## 安装
 
-Loon → 插件 → 添加插件，使用 [在线插件](https://raw.githubusercontent.com/JerseyRiver/HBO-AI-Subtitles/main/HBO.AI.Subtitles.plugin)。脚本自动从本仓库下载。
+Loon → 插件 → 添加插件，使用 [在线插件](https://raw.githubusercontent.com/JerseyRiver/HBO-AI-Subtitles/main/HBO.AI.Subtitles.plugin)。脚本自动从本仓库的固定代码版本下载，避免 Loon 复用早期同地址脚本缓存。更新时需刷新插件配置，不只刷新旧脚本。
 
 1. 启用脚本和 MITM，安装并信任证书。
 2. 填写自己的 `GeminiAPIKey` 与账号可用的 `GeminiModel`。默认模型不保证所有账号都可用。
 3. 外部字幕是可选功能：填写 `GatewayURL=https://你的域名/v1/你的令牌`。升级已有网关见 [SERVER.md](SERVER.md)，不要填写 SSH 密码或 SubDL Key。
 4. 停用旧 HBO 字幕插件。若使用过 HBO iPad Highest Quality，也停用它，并开启本插件 `QualityCompatibility`；此项将原画质逻辑整合进同一脚本。
-5. 重新导入 0.4.0 配置，完全退出 HBO，进入影片详情再播放；在字幕菜单选择新出现的选项。原 English / English CC 仍显示原文。
+5. 重新导入 0.4.1 配置，完全退出 HBO，进入影片详情再播放；在字幕菜单选择新出现的选项。原 English / English CC 仍显示原文。
 
 公版中的 Key 和网关地址均为空，不包含个人配置。无需填写片名、年份、季数或集数，也没有模式、源语言、翻译器、批大小及日志等级开关。保留翻译目标语言、双语上下位置、只显示译文与外部字幕偏移等实际设置。
 
-[下载 ZIP](https://github.com/JerseyRiver/HBO-AI-Subtitles/releases/download/v0.4.0/HBO-AI-Subtitles.zip)。本地备用安装：把 `scripts/HBO.Local.js` 放入 iCloud Drive → Loon → Scripts，导入 `HBO.AI.Subtitles.local.plugin`。ZIP 本身不能作为插件导入。
+[下载 ZIP](https://github.com/JerseyRiver/HBO-AI-Subtitles/releases/download/v0.4.1/HBO-AI-Subtitles.zip)。本地备用安装：把 `scripts/HBO.Local.js` 放入 iCloud Drive → Loon → Scripts，导入 `HBO.AI.Subtitles.local.plugin`。ZIP 本身不能作为插件导入。
 
 ## 工作方式
 
