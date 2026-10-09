@@ -18,33 +18,23 @@ const WAIT_INTERVAL = 400;
 const SUBTITLE_CACHE_LIMIT = 20;
 const CUE_BOUNDARY_CACHE_REVISION = "cue-isolation-v2";
 const url = new URL($request.url);
-let format = ($response.headers?.["Content-Type"] ?? $response.headers?.["content-type"])?.split(";")?.[0];
-if (format === "application/octet-stream" || format === "text/plain") format = detectFormat(url, $response?.body, format);
+const virtualRequest = typeof $response === 'undefined';
+const output = virtualRequest ? { status: 200, headers: { 'Content-Type': 'text/vtt; charset=utf-8', 'Cache-Control': 'private, max-age=60' }, body: '' } : $response;
 
 (async () => {
+    if (!virtualRequest) return;
     let context;
-    try { context = JSON.parse($persistentStore.read("HBOAI.Context.v1") || "{}"); } catch { return; }
+    try { context = JSON.parse($persistentStore.read('HBOAI.Context.v1') || '{}'); } catch { throw new Error('AI subtitle context missing'); }
     const segment = context.segments?.[$request.url];
-    if (!segment || segment.expires < Date.now()) return;
-    const source = String($response.body || "");
-    const valid = /^WEBVTT(?:\s|$)/.test(source) && /\d{2}:\d{2}(?::\d{2})?\.\d{2,3}\s+-->/.test(source);
-    if (!valid || Number($response.status || $response.statusCode || 200) >= 400) {
-        if (!segment.external) return;
-        await new Promise((resolve, reject) => {
-            $httpClient.get({ url: segment.external, timeout: 55 }, (error, response, body) => {
-                if (error || Number(response?.status || response?.statusCode) !== 200 || !String(body).startsWith("WEBVTT")) return reject(new Error("HBO external subtitles unavailable"));
-                $response.body = body;
-                $response.status = 200;
-                $response.statusCode = 200;
-                $response.headers = { "Content-Type": "text/vtt; charset=utf-8", "Cache-Control": "private, max-age=60", "X-HBO-AI-Source": "gateway" };
-                resolve();
-            });
+    if (!segment || segment.expires < Date.now() || !segment.source) throw new Error('AI subtitle context expired');
+    if (!/^https:\/\/[^/?#@]+\//.test(segment.source) || !/(?:^|\.)(?:e\.hbo|media\.max\.com|media\.h264\.io)$/.test(segment.source.split('/')[2])) throw new Error('Invalid subtitle source');
+    output.body = await new Promise((resolve, reject) => {
+        $httpClient.get({ url: segment.source, timeout: 12 }, (error, response, body) => {
+            if (error || Number(response?.status || response?.statusCode) !== 200) return reject(new Error('English subtitle fetch failed; choose external subtitles'));
+            resolve(String(body || ''));
         });
-        return;
-    }
-    format = "text/vtt";
-    $response.headers ||= {};
-	if (format !== "text/vtt" && format !== "application/vtt") return;
+    });
+    if (!/^WEBVTT(?:\s|$)/.test(output.body) || !/\d{2}:\d{2}(?::\d{2})?\.\d{2,3}\s+-->/.test(output.body)) throw new Error('English subtitles unavailable; choose external subtitles');
 	Console.logLevel = "ERROR";
 	const { Settings, Caches } = setENV("HBOAI", [["Universal", "Translate", "API"]], database);
 	const argumentValue = (...keys) => {
@@ -65,36 +55,36 @@ if (format === "application/octet-stream" || format === "text/plain") format = d
 		Model: argumentValue("GeminiModel", "Gemini.Model") || Settings.GeminiModel || Settings.Gemini?.Model,
 		BatchSize: argumentValue("GeminiBatchSize", "Gemini.BatchSize") || Settings.GeminiBatchSize || Settings.Gemini?.BatchSize,
 	};
-	$response.headers["X-DualSubs-Gemini-Key-Source"] = liveAPIKey ? "argument" : Settings.Gemini?.APIKey ? "storage" : "missing";
-	$response.headers["X-DualSubs-Gemini-Model"] = Settings.Gemini.Model;
+	output.headers["X-DualSubs-Gemini-Key-Source"] = liveAPIKey ? "argument" : Settings.Gemini?.APIKey ? "storage" : "missing";
+	output.headers["X-DualSubs-Gemini-Model"] = Settings.Gemini.Model;
 	Console.logLevel = Settings.LogLevel;
 	const languages = [
 		"EN",
 		(url.searchParams?.get("tlang") ?? Caches?.tlang)?.toUpperCase?.() ?? Settings.Languages[1],
 	];
-	const body = VTT.parse($response.body);
+	const body = VTT.parse(output.body);
 	const fullText = body?.body.map(item => (item?.text ?? "\u200b")?.replace(/<\/?[^<>]+>/g, ""));
-	const originalCacheKey = MD5(`${Settings.Vendor}|${Settings?.Gemini?.Model ?? ""}|${languages.join("|")}|${$response.body}`).toString();
+	const originalCacheKey = MD5(`${Settings.Vendor}|${Settings?.Gemini?.Model ?? ""}|${languages.join("|")}|${output.body}`).toString();
 	const cacheKey = MD5(`${CUE_BOUNDARY_CACHE_REVISION}|${originalCacheKey}`).toString();
-	$response.headers["X-DualSubs-Gemini-Cache-Revision"] = CUE_BOUNDARY_CACHE_REVISION;
+	output.headers["X-DualSubs-Gemini-Cache-Revision"] = CUE_BOUNDARY_CACHE_REVISION;
 	let translation = Caches.Subtitles.get(cacheKey);
 	if (!Array.isArray(translation) || translation.length !== fullText.length) {
 		const slot = await claimTranslationSlot(cacheKey, fullText.length);
 		if (slot.translation) {
 			translation = slot.translation;
-			$response.headers["X-DualSubs-Gemini-Coordinator"] = "wait-cache-hit";
-			$response.headers["X-DualSubs-Gemini"] = `cache-hit; cues=${translation.length}`;
+			output.headers["X-DualSubs-Gemini-Coordinator"] = "wait-cache-hit";
+			output.headers["X-DualSubs-Gemini"] = `cache-hit; cues=${translation.length}`;
 		} else {
-			$response.headers["X-DualSubs-Gemini-Coordinator"] = "leader";
+			output.headers["X-DualSubs-Gemini-Coordinator"] = "leader";
 			try {
 				translation = await translator(Settings.Vendor, Settings.Method, fullText, languages, Settings?.[Settings?.Vendor], Settings?.Times, Settings?.Interval, Settings?.Exponential);
 				if (Array.isArray(translation) && translation.length === fullText.length) {
 					const saved = savePersistentTranslation(cacheKey, translation);
 					Caches.Subtitles = saved.cache;
-					$response.headers["X-DualSubs-Gemini-Cache"] = `${saved.verified ? "write-ok" : "write-failed"}; entries=${saved.size}`;
+					output.headers["X-DualSubs-Gemini-Cache"] = `${saved.verified ? "write-ok" : "write-failed"}; entries=${saved.size}`;
 					clearCooldown();
 				}
-				$response.headers["X-DualSubs-Gemini"] = `translated; cues=${translation.length}`;
+				output.headers["X-DualSubs-Gemini"] = `translated; cues=${translation.length}`;
 			} catch (error) {
 				setCooldown(error);
 				throw error;
@@ -104,21 +94,22 @@ if (format === "application/octet-stream" || format === "text/plain") format = d
 		}
 	} else {
 		Console.info("Gemini 字幕缓存命中");
-		$response.headers["X-DualSubs-Gemini-Coordinator"] = "cache";
-		$response.headers["X-DualSubs-Gemini"] = `cache-hit; cues=${translation.length}`;
+		output.headers["X-DualSubs-Gemini-Coordinator"] = "cache";
+		output.headers["X-DualSubs-Gemini"] = `cache-hit; cues=${translation.length}`;
 	}
 	body.body = body.body.map((item, i) => {
 		item.text = combineText(item?.text ?? "\u200b", translation?.[i], Settings?.ShowOnly, Settings?.Position);
 		return item;
 	});
-	$response.body = VTT.stringify(body);
+	output.body = VTT.stringify(body);
 })()
 	.catch(error => {
 		Console.error(error);
-		$response.headers["X-DualSubs-Gemini"] = "error";
-		$response.headers["X-DualSubs-Gemini-Error"] = encodeURIComponent(String(error?.message ?? error)).slice(0, 180);
+        if (virtualRequest) { output.status = 502; output.body = "WEBVTT\n\n"; }
+		output.headers["X-DualSubs-Gemini"] = "error";
+		output.headers["X-DualSubs-Gemini-Error"] = encodeURIComponent(String(error?.message ?? error)).slice(0, 180);
 	})
-	.finally(() => done($response));
+	.finally(() => virtualRequest ? $done({ response: output }) : done(output));
 
 async function translator(vendor = "Gemini", method = "Part", text = [], [source = "AUTO", target = "ZH"], api = {}, times = 3, interval = 100, exponential = true) {
 	let length = 120;

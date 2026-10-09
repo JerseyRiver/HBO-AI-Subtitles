@@ -1,4 +1,4 @@
-# HBO AI Subtitles · Loon 实验版 0.2.1
+# HBO AI Subtitles · Loon 实验版 0.3.0
 
 这是独立的 HBO Max Loon 插件。设备端复用 AppleTV 插件的 Gemini 翻译逻辑，服务端共用升级后的 Apple 字幕网关。在线插件可直接添加到 Loon，自动下载配套脚本；VPS 仍需按下文升级。
 
@@ -10,15 +10,16 @@
 https://raw.githubusercontent.com/JerseyRiver/HBO-AI-Subtitles/main/HBO.AI.Subtitles.plugin
 ```
 
-[打开在线插件文件](https://raw.githubusercontent.com/JerseyRiver/HBO-AI-Subtitles/main/HBO.AI.Subtitles.plugin) · [下载 ZIP 安装包](https://github.com/JerseyRiver/HBO-AI-Subtitles/releases/download/v0.2.1/HBO-AI-Subtitles.zip) · [VPS 升级说明](SERVER.md)
+[打开在线插件文件](https://raw.githubusercontent.com/JerseyRiver/HBO-AI-Subtitles/main/HBO.AI.Subtitles.plugin) · [下载 ZIP 安装包](https://github.com/JerseyRiver/HBO-AI-Subtitles/releases/download/v0.3.0/HBO-AI-Subtitles.zip) · [VPS 升级说明](SERVER.md)
 
 1. 启用脚本与 MITM，安装并信任证书。在线插件会自动下载脚本，无需手动放置 JS。
 2. 填写自己的 `GeminiAPIKey` 和账号可用的 `GeminiModel`。设备端翻译不需要 VPS。
-3. 彻底退出 HBO Max，重新进入影片，再在字幕菜单选择 **English 或 English CC**。新版优先覆盖英文轨，不依赖 App 展示新增的字幕选项。
+3. 停用旧版 HBO 字幕插件；如之前使用 HBO iPad Highest Quality，也停用它，并在本插件开启 `QualityCompatibility`，由一个脚本执行原最高画质逻辑和字幕逻辑。
+4. 重新导入 0.3.0 插件配置。只更新旧配置的 JS 不够，因为请求规则已改变。彻底退出 HBO Max，进入影片详情再播放，在字幕菜单选择 **AI 翻译** 或 **外部字幕**。原 English / English CC 保持原文。
 
-本地安装备用：将 ZIP 中 `scripts/` 的两个 JS 放入 iCloud Drive → Loon → Script，导入 `HBO.AI.Subtitles.local.plugin`。下载 ZIP 后不要将 ZIP 本身作为插件导入。
+本地安装备用：将 ZIP 中 `scripts/` 的四个 HBO JS 放入 iCloud Drive → Loon → Script，导入 `HBO.AI.Subtitles.local.plugin`。下载 ZIP 后不要将 ZIP 本身作为插件导入。
 
-`Mode=Auto`：有官方中文时不翻译；没有官方中文时翻译完整英文/英文 CC。`Translate`：即使已有中文也翻译英文。强制字幕（Forced）、片头、预告和静态空字幕不参与翻译。双语位置和只显示译文沿用 Apple 版参数。
+`Mode=Both` 同时添加可用的两种选项；`AI` 仅添加 AI 翻译；`External` 仅添加外部字幕。有完整英文轨时添加“AI 翻译”，选择后获取该轨并调用设备端 Gemini。已配置网关且识别到完整影片信息时添加“外部字幕”，选择后从 VPS 获取字幕。原英文和官方中文字幕均保留；英文无法提取时可另选外部字幕。强制字幕、片头、预告和静态空字幕不参与 AI 翻译。
 
 本插件支持抓包中观察到的 `playbackInfo → HLS → WebVTT` 路径；不处理 DASH、加密字幕、内嵌 CEA 字幕或 DRM。尚未完成真实 Loon + HBO App 实机端到端验证。
 
@@ -32,9 +33,7 @@ https://raw.githubusercontent.com/JerseyRiver/HBO-AI-Subtitles/main/HBO.AI.Subti
 
 `Title/Year/MediaType/Season/Episode` 现在均是可选的手动回退参数，正常情况下留空。若 App 没有发出可读的详情响应，或详情关联不完整，插件不会猜片名或借用上一次浏览的影片；这时仍可直接翻译英文，但外部字幕需补充元数据或重新进入详情页。`OffsetSeconds` 仅用于外部字幕校时，正数延后、负数提前。
 
-英文轨请求返回错误页、空响应或不含有效 cue 的文本时，且已配置网关和完整影片信息，尝试请求对应时间窗口的外部字幕。有字幕轨但其上游请求完全超时、没有进入 Loon 响应脚本时，这条自动回退无法执行：改用 `External` 并重新进入影片。
-
-`External` 优先覆盖完整英文轨；没有英文时覆盖第一个完整、非强制字幕轨；字幕菜单通常仍显示原语言名称，需要选择该轨。没有任何字幕轨时，尝试新增“外部中文字幕”并为视频变体补上字幕组，能否显示取决于 HBO App。正常模式也会尝试增加独立外部选项。
+两种选项使用各自的播放列表和请求地址，不共用“英文字幕”按钮，也不在 AI 请求失败后偷偷替换为外部字幕。播放信息的 `textTracks` 和 HLS 主列表同时添加独立选项，使用不同语言标识区分；具体显示仍需 HBO App 实机验证。没有英文时，不添加 AI 翻译；没有任何原字幕轨时，外部字幕尝试新增字幕组。
 
 服务器优先匹配标记 HBO / HMAX / Max 的英文发行字幕；同发行版、时间轴兼容的现成中文优先，否则使用服务器 Gemini 翻译。HBO 外部字幕不套用 Apple CC 采样、Apple 10 秒媒体映射或 Apple 发行版优先策略。服务器状态明确报告 `platform=hbo`，没有参考字幕时不声称已经自动校准；片长过滤不代表每一句已经对齐。
 
@@ -46,7 +45,7 @@ https://raw.githubusercontent.com/JerseyRiver/HBO-AI-Subtitles/main/HBO.AI.Subti
 
 首次 SubDL 下载与翻译可能超过播放器等待时间；服务器完成缓存后需要重新进入影片。不同剪辑/发行版会导致非线性错位，手动偏移也无法修复删减。外挂目前返回中文字幕，设备端的“双语/只显示译文”参数不改变服务器字幕。
 
-现有 HBO 最高画质插件也匹配主播放列表。字幕插件本身保留视频、音频和许可证，但 Loon 对多条响应脚本的执行顺序及另一插件对“非主播放列表”的处理会影响组合效果。建议先单独验证本字幕插件，组合使用需要实机确认。
+Loon 的 HTTP 脚本只执行第一条匹配规则。旧最高画质插件也匹配播放信息和 HLS，因此并行启用可能阻止字幕脚本执行。`QualityCompatibility=true` 将原最高画质代码整合进本插件；开启后必须停用旧最高画质插件。未使用过该插件的用户保持默认 false。规则说明见 [Loon 官方文档](https://nsloon.app/docs/Script/)。
 
 ## 缓存与数据
 
@@ -69,7 +68,7 @@ npm run test:server
 
 如果仓库上一级目录存在自己的 `.har` 文件，测试会额外执行抓包回放；公开仓库和 ZIP 不含抓包，默认仅执行合成测试。
 
-测试包括三份本地 HAR 的 45 个 HLS/播放响应回放，以及详情元数据按 editId 自动关联、换集及合成的英文翻译、403 网关回退、官方中文、无字幕轨、时间窗口、平台缓存和令牌遮盖。没有调用真实 Gemini/SubDL API，不消耗额度。抓包回放不代表真实设备成功播放。
+测试包括四份本地 HAR 的 40 个响应回放、10 次主列表改写，以及独立菜单选项、原英文保留、刷新和换集映射、实际 AI 请求分支、上游失败、外部字幕时间窗口、详情 editId 关联和画质整合。新增抓包中的四段正片字幕均能映射到独立 AI 请求。服务器另通过 31 项测试。测试未调用真实 Gemini/SubDL API；抓包回放不代表真实设备成功播放。
 
 插件组合发行遵循 GPL-3.0-only，保留 DualSubs 与依赖声明；网关独立遵循 Apache-2.0。详见 `LICENSE`、`NOTICE` 和 `scripts/LICENSES.txt`。
 

@@ -1,6 +1,6 @@
 {
   "name": "hbo-ai-subtitles",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "HBO Max subtitles for Loon: Gemini translation and a shared subtitle gateway",
@@ -15,7 +15,7 @@
     "node": ">=22.18.0"
   },
   "scripts": {
-    "build": "rspack build -c rspack.config.js --mode=production",
+    "build": "node scripts/build-compat.mjs && rspack build -c rspack.config.js --mode=production",
     "test": "node test/verify.mjs",
     "test:server": "python3 -m unittest discover -s server -v"
   },

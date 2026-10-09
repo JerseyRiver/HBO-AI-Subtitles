@@ -52,3 +52,7 @@ The source files under src/ represent a modified downstream version of Universal
 The independent Python gateway under server/ is Copyright 2026 JerseyRiver,
 licensed under Apache-2.0, with its license in server/LICENSE. Its MITM/HLS
 integration does not grant rights to copyrighted films or third-party subtitles.
+
+Optional HBO quality compatibility embeds the existing JerseyRiver HBO Max
+iPad Highest Quality scripts, copyright 2026 JerseyRiver, under MIT License.
+Original sources and full license: upstream/hbo-quality/.

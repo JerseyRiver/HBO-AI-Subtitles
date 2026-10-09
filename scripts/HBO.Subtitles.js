@@ -52,7 +52,30 @@
     var data={title:media.title,year:media.year,type:media.type,season:media.season,episode:media.episode,duration:plan.duration,offset:args.OffsetSeconds || '0'};
     return root+'/hbo/'+plan.id+'/subtitle.vtt?'+Object.keys(data).map(function(k){return encodeURIComponent(k)+'='+encodeURIComponent(data[k]);}).join('&');
   }
-  function virtual(plan){return plan.origin+'/__hbo_ai__/'+plan.id+'/playlist.m3u8';}
+  function virtual(plan,kind,slot){return plan.origin+'/__hbo_ai__/'+plan.id+'/'+kind+'/'+(slot || 0)+'/playlist.m3u8';}
+  function aiPlaylist(body,base,plan,slot){
+    if(!/#EXT-X-ENDLIST/.test(body) || /#EXT-X-MAP:|#EXT-X-KEY:/.test(body))throw new Error('unsupported English subtitle playlist');
+    var lines=body.split(/\r?\n/),index=0;
+    for(var i=0;i<lines.length;i++)if(lines[i] && lines[i].charAt(0)!=='#'){
+      var native=absolute(lines[i],base);
+      if(!allowed(native))throw new Error('subtitle host');
+      if(native.indexOf('/gcs/'+plan.id+'/t/')>=0){
+        var target=plan.origin+'/__hbo_ai__/'+plan.id+'/ai/'+slot+'/seg-'+index+'.vtt';
+        var current=read();current.segments[target]={id:plan.id,source:native,expires:plan.expires};save(current);lines[i]=target;index++;
+      }else lines[i]=native;
+    }
+    if(!index)throw new Error('English main subtitles unavailable');
+    return lines.join('\n');
+  }
+  function addTrack(lines,group,label,language,uri){lines.push('#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="'+group+'",NAME="'+label+'",LANGUAGE="'+language+'",DEFAULT=NO,AUTOSELECT=NO,URI="'+uri+'"');}
+  function advertise(main,plan){
+    var original=(main.textTracks || []).filter(function(t){return !/-x-(ai|external)$/.test(t.language || '');});
+    var english=original.find(function(t){return /^en(?:-|$)/i.test(t.language || '');});
+    main.textTracks=original.slice();
+    if(english && args.Mode!=='External')main.textTracks.push({type:'subtitles',language:'zh-Hans-x-ai',displayName:'AI 翻译',format:'webvtt'});
+    if(plan.external && args.Mode!=='AI')main.textTracks.push({type:'subtitles',language:'zh-Hans-x-external',displayName:'外部字幕',format:'webvtt'});
+  }
+
   function fallbackPeriods(plan){
     var lines=['#EXTM3U','#EXT-X-VERSION:6','#EXT-X-PLAYLIST-TYPE:VOD','#EXT-X-TARGETDURATION:'+Math.ceil(Math.max.apply(null,plan.periods.map(function(p){return p.duration;}))),'#EXT-X-MEDIA-SEQUENCE:0'];
     plan.periods.forEach(function(p,i){if(i)lines.push('#EXT-X-DISCONTINUITY');lines.push('#EXTINF:'+p.duration+',',p.type==='main'?plan.external+'&from=0&to='+(plan.duration+1):plan.origin+'/public/static/empty.vtt');});
@@ -74,12 +97,21 @@
     return lines.join('\n');
   }
   async function run(){
-    var s=read(),u=$request.url,virtualMatch=/\/__hbo_ai__\/([a-f0-9-]{36})\/playlist\.m3u8(?:\?|$)/i.exec(u);
+    var s=read(),u=$request.url,virtualMatch=/\/__hbo_ai__\/([a-f0-9-]{36})\/(ai|external)\/(\d+)\/playlist\.m3u8(?:\?|$)/i.exec(u);
     if(typeof $response==='undefined'){
       if(!virtualMatch)return done();
-      var vp=s.plans[virtualMatch[1]];
-      if(!vp || vp.expires<Date.now() || !vp.external)return done({response:{status:404,headers:{'Content-Type':'text/plain'},body:'HBO subtitle context expired'}});
-      return done({response:{status:200,headers:{'Content-Type':'application/vnd.apple.mpegurl','Cache-Control':'no-store'},body:vp.externalPlaylist || fallbackPeriods(vp)}});
+      var vp=s.plans[virtualMatch[1]],kind=virtualMatch[2],slot=+virtualMatch[3];
+      if(!vp || vp.expires<Date.now())return done({response:{status:404,headers:{'Content-Type':'text/plain'},body:'HBO subtitle context expired'}});
+      if(kind==='ai'){
+        var source=vp.aiSources && vp.aiSources[slot];
+        if(!source || !allowed(source))throw new Error('AI source not registered');
+        var native=await get(source);var translated=aiPlaylist(native,source,vp,slot);
+        return done({response:{status:200,headers:{'Content-Type':'application/vnd.apple.mpegurl','Cache-Control':'no-store'},body:translated}});
+      }
+      vp.external=gateway(vp);if(!vp.external)return done({response:{status:404,headers:{'Content-Type':'text/plain'},body:'HBO external metadata unavailable'}});
+      var externalBody;
+      if(vp.templateSource){try{externalBody=externalTemplate(await get(vp.templateSource),vp.templateSource,vp);}catch(e){if(!/subtitle fetch failed/.test(e.message))throw e;}}
+      return done({response:{status:200,headers:{'Content-Type':'application/vnd.apple.mpegurl','Cache-Control':'no-store'},body:externalBody || fallbackPeriods(vp)}});
     }
     var body=String($response.body || '');
     if(/\/cms\//.test(u)){collectMetadata(JSON.parse(body));return done();}
@@ -92,7 +124,7 @@
       var safe=periods.every(function(p,i){return p.duration>0 && p.start>=0 && (!i || Math.abs(p.start-periods[i-1].start-periods[i-1].duration)<0.1);});
       var playbackRequest={};try{playbackRequest=JSON.parse($request.body || '{}');}catch(e){}
       var plan={editId:playbackRequest.editId || main.editId || '',id:main.manifestationId.toLowerCase(),master:manifest.url,origin:/^https:\/\/[^/]+/.exec(manifest.url)[0],duration:main.duration,start:main.start,periods:periods,safePeriods:safe,expires:Date.now()+6*3600000};
-      plan.external=safe?gateway(plan):'';s.plans[plan.id]=plan;save(s);return done();
+      plan.external=safe?gateway(plan):'';var previous=s.plans[plan.id];if(previous){plan.aiSources=previous.aiSources;plan.templateSource=previous.templateSource;}s.plans[plan.id]=plan;save(s);advertise(main,plan);return done({body:JSON.stringify(data),headers:Object.assign({},$response.headers,{'X-HBO-AI-Stage':'playback-options'})});
     }
     if(body.indexOf('#EXTM3U')!==0)return done();
     var idMatch=/\/gcs\/([a-f0-9-]{36})\//i.exec(u),id=idMatch && idMatch[1].toLowerCase(),plan=s.plans[id];
@@ -100,43 +132,29 @@
       if(!id)return done();
       if(!plan){plan={id:id,origin:/^https:\/\/[^/]+/.exec(u)[0],duration:0,expires:Date.now()+6*3600000};s.plans[id]=plan;}
       plan.external=gateway(plan);
-      ['playlists','segments'].forEach(function(k){Object.keys(s[k]).forEach(function(key){if(s[k][key].id===id)delete s[k][key];});});
-      var lines=body.split(/\r?\n/),tracks=[];
+      var lines=body.split(/\r?\n/).filter(function(l){return !(l.indexOf('#EXT-X-MEDIA:')===0 && l.indexOf('/__hbo_ai__/')>=0);}),tracks=[];
       lines.forEach(function(l,i){if(l.indexOf('#EXT-X-MEDIA:')===0){var a=attrs(l);if(a.TYPE==='SUBTITLES' && a.URI && a.FORCED!=='YES')tracks.push({a:a,index:i,url:absolute(a.URI,u)});}});
-      var english=tracks.filter(function(t){return /^en(?:-|$)/i.test(t.a.LANGUAGE || '');}),hasChinese=tracks.some(function(t){return /^zh(?:-|$)/i.test(t.a.LANGUAGE || '');});
-      var mode=args.Mode || 'Auto',translate=mode==='Translate' || mode==='Auto' && !hasChinese;
-      if(translate)english.forEach(function(t){s.playlists[t.url]={id:id};});
-      plan.externalPlaylist='';
-      if(plan.external && tracks.length){
-        try{
-          var template=english[0] || tracks[0], templateBody=await get(template.url);
-          try{plan.externalPlaylist=externalTemplate(templateBody,template.url,plan);}catch(e){plan.external='';console.log('[HBO AI] Unsupported subtitle timeline; external track skipped');}
-        }catch(e){console.log('[HBO AI] Native template unavailable; using playback periods');}
-      }
-      if(mode==='External' || !english.length && !hasChinese){
-        if(plan.external && tracks.length){var target=english[0] || tracks[0];lines[target.index]=set(lines[target.index],'URI',virtual(plan));}
-        else if(plan.external){
-          lines.unshift('#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="hbo-ai",NAME="外部中文字幕",LANGUAGE="zh-Hans",DEFAULT=NO,AUTOSELECT=NO,URI="'+virtual(plan)+'"');
-          // EXT M3U must remain the first line.
-          lines.splice(lines.indexOf('#EXTM3U'),1);lines.unshift('#EXTM3U');
-          lines=lines.map(function(l){return l.indexOf('#EXT-X-STREAM-INF:')===0?set(l,'SUBTITLES','hbo-ai'):l;});
+      var english=tracks.filter(function(t){return /^en(?:-|$)/i.test(t.a.LANGUAGE || '');}),groups={},aiCount=0,externalCount=0;
+      tracks.forEach(function(t){groups[t.a['GROUP-ID']]=true;});
+      // Sources belong to the manifestation, never to the last visited episode.
+      plan.aiSources=plan.aiSources || [];
+      Object.keys(groups).forEach(function(g){
+        var candidates=english.filter(function(t){return t.a['GROUP-ID']===g;});
+        candidates.sort(function(a,b){return Number(/CC/i.test(a.a.NAME || ''))-Number(/CC/i.test(b.a.NAME || ''));});
+        if(candidates.length && args.Mode!=='External'){
+          var source=candidates[0].url,slot=plan.aiSources.indexOf(source);if(slot<0){slot=plan.aiSources.length;plan.aiSources.push(source);}
+          addTrack(lines,g,'AI 翻译','zh-Hans-x-ai',virtual(plan,'ai',slot));aiCount++;
         }
-      }else if(plan.external){
-        var groups={};tracks.forEach(function(t){groups[t.a['GROUP-ID']]=true;});Object.keys(groups).forEach(function(g){lines.push('#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="'+g+'",NAME="外部中文字幕",LANGUAGE="zh-Hans",DEFAULT=NO,AUTOSELECT=NO,URI="'+virtual(plan)+'"');});
+        if(plan.external && args.Mode!=='AI'){addTrack(lines,g,'外部字幕','zh-Hans-x-external',virtual(plan,'external',0));externalCount++;}
+      });
+      plan.templateSource=(english[0] || tracks[0] || {}).url || '';
+      if(!tracks.length && plan.external && args.Mode!=='AI'){
+        addTrack(lines,'hbo-ai','外部字幕','zh-Hans-x-external',virtual(plan,'external',0));externalCount++;
+        lines=lines.map(function(l){return l.indexOf('#EXT-X-STREAM-INF:')===0?set(l,'SUBTITLES','hbo-ai'):l;});
       }
-      save(s);return done({body:lines.join('\n')});
+      save(s);return done({body:lines.join('\n'),headers:Object.assign({},$response.headers,{'X-HBO-AI-Tracks':'ai='+aiCount+'; external='+externalCount})});
     }
-    var context=s.playlists[u];if(!context || !/#EXT-X-ENDLIST/.test(body))return done();
-    plan=s.plans[context.id];if(!plan || plan.expires<Date.now())return done();
-    var cursor=0,d=0,wasMain=false;
-    body.split(/\r?\n/).forEach(function(l){
-      if(l.indexOf('#EXTINF:')===0)d=parseFloat(l.slice(8));
-      if(l && l.charAt(0)!=='#'){
-        var segment=absolute(l,u),main=segment.indexOf('/gcs/'+plan.id+'/t/')>=0;
-        if(main){if(!wasMain)cursor=0;s.segments[segment]={id:plan.id,external:plan.external?plan.external+'&from='+cursor.toFixed(3)+'&to='+(cursor+d).toFixed(3):'',expires:plan.expires};cursor+=d;}
-        wasMain=main;
-      }
-    });save(s);done();
+    done();
   }
-  run().catch(function(){console.log('[HBO AI] Rewrite skipped; check playback context and parameters');done();});
+  run().catch(function(){console.log('[HBO AI] Subtitle processing failed');if(typeof $response==='undefined')done({response:{status:502,headers:{'Content-Type':'text/plain','X-HBO-AI-Error':'playlist-unavailable'},body:'Subtitle playlist unavailable; retry or choose external subtitles'}});else done();});
 })();

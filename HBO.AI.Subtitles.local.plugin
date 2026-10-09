@@ -1,12 +1,13 @@
 #!name = HBO AI Subtitles
-#!desc = HBO Max 字幕：英文/CC 的 Gemini 翻译、独立缓存、共用 AppleTV VPS 外部字幕。默认保留官方中文；字幕需手动选择。实验版。
+#!desc = HBO Max 独立字幕选项：AI 翻译、VPS 外部字幕，保留原英文。支持整合旧最高画质逻辑。实验版。
 #!author = JerseyRiver
-#!version = 0.2.1
+#!version = 0.3.0
 #!date = 2026-10-09
 #!system = iOS,iPadOS
 
 [Argument]
-Mode = select,"Auto","Translate","External",tag=字幕模式,desc=Auto 有官方中文时保留原轨否则翻译英文；Translate 强制翻译英文；External 覆盖一个非强制字幕轨。外部模式需网关和影片信息。
+QualityCompatibility = switch,false,tag=保留旧最高画质逻辑,desc=原来使用 HBO iPad Highest Quality 时可开启；此时停用旧最高画质插件，避免规则抢先匹配。
+Mode = select,"Both","AI","External",tag=新增字幕选项,desc=Both 添加独立 AI 翻译与外部字幕。保留原英文轨；外部字幕需网关和自动影片信息。
 Vendor = input,"Gemini",tag=翻译器,desc=使用 Gemini。
 GeminiAPIKey = input,"",tag=Gemini API Key,desc=填写自己的 Key。
 GeminiModel = input,"gemini-3.5-flash-lite",tag=Gemini 模型,desc=填写账号可用的精确模型 ID。
@@ -25,11 +26,12 @@ Episode = input,"",tag=集数,desc=仅手动回退时填写；自动识别会随
 OffsetSeconds = input,"0",tag=外部字幕校时秒数,desc=正数延后负数提前。仅对外部字幕生效；不会自动冒用 Apple 的 CC 校时。
 
 [Script]
-http-response ^https:\/\/default\.[a-z0-9-]+\.prd\.api\.discomax\.com\/cms\/ script-path=HBO.Subtitles.js, requires-body=1, timeout=10, tag=HBO AI Metadata
-http-request ^https:\/\/(?:[^\/?#]+\.e\.hbo|[^\/?#]+\.media\.max\.com|[^\/?#]+\.media\.h264\.io)\/__hbo_ai__\/[a-f0-9-]{36}\/playlist\.m3u8(?:\?|$) script-path=HBO.Subtitles.js, timeout=10, tag=HBO AI Virtual Playlist, argument=[{Mode},{GatewayURL},{Title},{Year},{MediaType},{Season},{Episode},{OffsetSeconds}]
-http-response ^https:\/\/default\.any-any\.prd\.api\.discomax\.com\/playback-orchestrator\/any\/playback-orchestrator\/v1\/playbackInfo(?:\?|$) script-path=HBO.Subtitles.js, requires-body=1, timeout=10, tag=HBO AI Playback Context, argument=[{Mode},{GatewayURL},{Title},{Year},{MediaType},{Season},{Episode},{OffsetSeconds}]
-http-response ^https:\/\/(?:[^\/?#]+\.e\.hbo|[^\/?#]+\.media\.max\.com|[^\/?#]+\.media\.h264\.io)\/[^?#]+\.m3u8(?:\?|$) script-path=HBO.Subtitles.js, requires-body=1, timeout=20, tag=HBO AI HLS Subtitles, argument=[{Mode},{GatewayURL},{Title},{Year},{MediaType},{Season},{Episode},{OffsetSeconds}]
-http-response ^https:\/\/(?:[^\/?#]+\.e\.hbo|[^\/?#]+\.media\.max\.com|[^\/?#]+\.media\.h264\.io)\/[^?#]+\.(?:vtt|webvtt)(?:\?|$) script-path=HBO.Translate.response.bundle.js, requires-body=1, timeout=60, tag=HBO AI Translate, argument=[{Vendor},{GeminiAPIKey},{GeminiModel},{GeminiBatchSize},{Languages[0]},{Languages[1]},{Position},{ShowOnly},{LogLevel}]
+http-request ^https:\/\/default\.any-any\.prd\.api\.discomax\.com\/playback-orchestrator\/any\/playback-orchestrator\/v1\/playbackInfo(?:\?|$) script-path=HBO.Playback.request.js, requires-body=1, timeout=10, tag=HBO Optional Quality Request, argument=[{QualityCompatibility}]
+http-request ^https:\/\/(?:[^\/?#]+\.e\.hbo|[^\/?#]+\.media\.max\.com|[^\/?#]+\.media\.h264\.io)\/__hbo_ai__\/[a-f0-9-]{36}\/ai\/\d+\/seg-\d+\.vtt(?:\?|$) script-path=HBO.Translate.response.bundle.js, timeout=60, tag=HBO Independent AI Translate, argument=[{Vendor},{GeminiAPIKey},{GeminiModel},{GeminiBatchSize},{Languages[0]},{Languages[1]},{Position},{ShowOnly},{LogLevel}]
+http-request ^https:\/\/(?:[^\/?#]+\.e\.hbo|[^\/?#]+\.media\.max\.com|[^\/?#]+\.media\.h264\.io)\/__hbo_ai__\/[a-f0-9-]{36}\/(?:ai|external)\/\d+\/playlist\.m3u8(?:\?|$) script-path=HBO.Subtitles.js, timeout=20, tag=HBO Independent Subtitle Playlist, argument=[{Mode},{GatewayURL},{Title},{Year},{MediaType},{Season},{Episode},{OffsetSeconds},{QualityCompatibility}]
+http-response ^https:\/\/default\.[a-z0-9-]+\.prd\.api\.discomax\.com\/cms\/ script-path=HBO.Compatible.response.js, requires-body=1, timeout=10, tag=HBO Metadata, argument=[{Mode},{GatewayURL},{Title},{Year},{MediaType},{Season},{Episode},{OffsetSeconds},{QualityCompatibility}]
+http-response ^https:\/\/default\.any-any\.prd\.api\.discomax\.com\/playback-orchestrator\/any\/playback-orchestrator\/v1\/playbackInfo(?:\?|$) script-path=HBO.Compatible.response.js, requires-body=1, timeout=10, tag=HBO Playback Options, argument=[{Mode},{GatewayURL},{Title},{Year},{MediaType},{Season},{Episode},{OffsetSeconds},{QualityCompatibility}]
+http-response ^https:\/\/(?:[^\/?#]+\.e\.hbo|[^\/?#]+\.media\.max\.com|[^\/?#]+\.media\.h264\.io)\/[^?#]+\.m3u8(?:\?|$) script-path=HBO.Compatible.response.js, requires-body=1, timeout=30, tag=HBO HLS Options and Quality, argument=[{Mode},{GatewayURL},{Title},{Year},{MediaType},{Season},{Episode},{OffsetSeconds},{QualityCompatibility}]
 
 [MITM]
 hostname = default.*.prd.api.discomax.com, *.e.hbo, *.media.max.com, *.media.h264.io
