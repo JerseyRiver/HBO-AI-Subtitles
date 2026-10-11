@@ -1,4 +1,4 @@
-# HBO AI Subtitles · Loon 0.4.1
+# HBO AI Subtitles · Loon 0.4.2
 
 <img src="icons/hbo-ai.png" width="80" alt="HBO AI Subtitles 图标">
 
@@ -21,12 +21,20 @@ Loon → 插件 → 添加插件，使用 [在线插件](https://raw.githubuserc
 1. 启用脚本和 MITM，安装并信任证书。
 2. 填写自己的 `GeminiAPIKey` 与账号可用的 `GeminiModel`。默认模型不保证所有账号都可用。
 3. 外部字幕是可选功能：填写 `GatewayURL=https://你的域名/v1/你的令牌`。升级已有网关见 [SERVER.md](SERVER.md)，不要填写 SSH 密码或 SubDL Key。
-4. 停用旧 HBO 字幕插件。若使用过 HBO iPad Highest Quality，也停用它，并开启本插件 `QualityCompatibility`；此项将原画质逻辑整合进同一脚本。
-5. 重新导入 0.4.1 配置，完全退出 HBO，进入影片详情再播放；在字幕菜单选择新出现的选项。原 English / English CC 仍显示原文。
+4. 停用旧 HBO 字幕插件。若使用过 HBO iPad Highest Quality，也停用它，并开启本插件 `QualityCompatibility`；开启后将 iPad 识别为 Apple TV，尝试让正片使用最高可用画质；画质仍取决于片源、账号和设备。
+5. 重新导入 0.4.2 配置，完全退出 HBO，进入影片详情再播放；在字幕菜单选择新出现的选项。原 English / English CC 仍显示原文。
 
-公版中的 Key 和网关地址均为空，不包含个人配置。无需填写片名、年份、季数或集数，也没有模式、源语言、翻译器、批大小及日志等级开关。保留翻译目标语言、双语上下位置、只显示译文与外部字幕偏移等实际设置。
+公版中的 Key 和网关地址均为空，不包含个人配置。无需填写片名、年份、季数或集数，也没有模式、源语言、翻译器、批大小及日志等级开关。保留最高画质、翻译目标语言、双语上下位置、只显示译文与外部字幕偏移等实际设置。
 
-[下载 ZIP](https://github.com/JerseyRiver/HBO-AI-Subtitles/releases/download/v0.4.1/HBO-AI-Subtitles.zip)。本地备用安装：把 `scripts/HBO.Local.js` 放入 iCloud Drive → Loon → Scripts，导入 `HBO.AI.Subtitles.local.plugin`。ZIP 本身不能作为插件导入。
+[下载 ZIP](https://github.com/JerseyRiver/HBO-AI-Subtitles/releases/download/v0.4.2/HBO-AI-Subtitles.zip)。本地备用安装：把 `scripts/HBO.Local.js` 放入 iCloud Drive → Loon → Scripts，导入 `HBO.AI.Subtitles.local.plugin`。ZIP 本身不能作为插件导入。
+
+## 0.4.2 修复
+
+当前插件的中文目标和双语设置优先于旧存储，不再被遗留英文目标覆盖。译文缓存使用新的修订号，旧译文会按需重新翻译；全英文冒充中文的结果不保存。保留数字和短名字等合理不变的文本，并避免重复显示。
+
+相邻台词分到不同请求，即使一个字幕段不足 400 条也执行隔离；保留原始台词编号，通过 ID 恢复乱序或补齐缺失返回。原字幕时间、位置、换行和 `X-TIMESTAMP-MAP` 保持一致。首次新段最多三路并行翻译可能增加 API 请求次数，AI 语义错位仍需要实际播放反馈验证。
+
+最高画质继续使用 Apple TV / tvOS 身份。插件保留 HBO 返回的跳过标记，但本次抓包缺少前情提要标记，不能保证按钮恢复，不自行猜测跳过时间。
 
 ## 工作方式
 
@@ -38,7 +46,7 @@ Loon → 插件 → 添加插件，使用 [在线插件](https://raw.githubuserc
 
 选择外部字幕后，共用 AppleTV 网关的 `/hbo/` 路由，平台缓存分开。服务器匹配 HBO/HMAX/Max 发行字幕，已有合适中文时优先使用，否则翻译英文；整季包必须确认目标集。字幕沿原正片时间窗口返回，不套用 Apple 的 10 秒映射或 CC 校准。没有参考字幕时不会宣称已经自动对齐。首次下载和翻译可能需要等待，完成后可重新进入影片。
 
-Loon 只执行首条匹配的 HTTP 脚本。旧画质插件也匹配播放信息和 HLS，因此应停用旧插件，通过 `QualityCompatibility` 整合；未使用过旧插件的用户保持默认关闭。见 [Loon 文档](https://nsloon.app/docs/Script/)。
+Loon 只执行首条匹配的 HTTP 脚本。旧画质插件也匹配播放信息和 HLS，因此应停用旧插件，通过“最高画质”（`QualityCompatibility`）开关启用整合逻辑，按需开启。见 [Loon 文档](https://nsloon.app/docs/Script/)。
 
 ## 20 个影片缓存
 

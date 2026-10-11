@@ -212,7 +212,8 @@ export default class Translate {
 		const sourceName = languageNames[source] ?? source;
 		const targetName = languageNames[target] ?? target;
 		const thinkingConfig = model.startsWith("gemini-3") ? { thinkingLevel: "minimal" } : { thinkingBudget: 0 };
-		const payload = text.map((value, id) => ({ id, text: value }));
+		const payload = text.map((value, index) => ({ id: api?.CueIds?.[index] ?? index, text: value }));
+		if (new Set(payload.map(item => item.id)).size !== payload.length || payload.some(item => !Number.isInteger(item.id))) throw new Error("字幕 ID 无效");
 		const indexed = new Map();
 		const requestTranslations = async (entries, transportRetries = 1) => {
 			const requestStartedAt = Date.now();
@@ -302,7 +303,9 @@ export default class Translate {
 			if (pending.length !== 0 && repairRound < 2) await new Promise(resolve => setTimeout(resolve, 150 * (repairRound + 1)));
 		}
 		if (indexed.size !== text.length) throw new Error(`Gemini 返回 ID 不完整：期望 ${text.length}，实际 ${indexed.size}，补译后仍缺 ${text.length - indexed.size}`);
-		return text.map((_, id) => indexed.get(id));
+		const result = payload.map(item => indexed.get(item.id));
+		if (/^ZH(?:-|$)/i.test(target) && (text.join(" ").match(/[A-Za-z]+/g) || []).length >= 12 && !/[\u3400-\u9fff]/.test(result.join(" "))) throw new Error("Gemini 返回英文而非中文，译文未保存");
+		return result;
 	}
 
 	async Google(text = [], source = this.Source, target = this.Target) {

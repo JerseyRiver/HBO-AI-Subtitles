@@ -24,10 +24,9 @@ const filmCache = new FilmCache($persistentStore, FILM_CACHE_LIMIT, () => {
     Storage.setItem(NATIVE_CACHE_KEY, []);
     Storage.setItem(SUBTITLE_CACHE_KEY, []);
 });
-const CUE_BOUNDARY_CACHE_REVISION = "cue-isolation-v2";
-const url = new URL($request.url);
+const CUE_BOUNDARY_CACHE_REVISION = "cue-isolation-v3-target-checked";
 const virtualRequest = typeof $response === 'undefined';
-const output = virtualRequest ? { status: 200, headers: { 'Content-Type': 'text/vtt; charset=utf-8', 'X-HBO-AI-Version': '0.4.1', 'Cache-Control': 'private, max-age=60' }, body: '' } : $response;
+const output = virtualRequest ? { status: 200, headers: { 'Content-Type': 'text/vtt; charset=utf-8', 'X-HBO-AI-Version': '0.4.2', 'Cache-Control': 'private, max-age=60' }, body: '' } : $response;
 
 (async () => {
     if (!virtualRequest) return;
@@ -74,6 +73,9 @@ const output = virtualRequest ? { status: 200, headers: { 'Content-Type': 'text/
 	};
 	const liveAPIKey = argumentValue("GeminiAPIKey", "Gemini.APIKey");
 	Settings.Vendor = "Gemini";
+	const liveShowOnly = argumentValue("ShowOnly");
+	if (liveShowOnly !== undefined) Settings.ShowOnly = liveShowOnly === true || liveShowOnly === "true";
+	Settings.Position = argumentValue("Position") || Settings.Position;
 	Settings.Gemini = {
 		...Settings.Gemini,
 		APIKey: liveAPIKey || Settings.GeminiAPIKey || Settings.Gemini?.APIKey || "",
@@ -84,18 +86,21 @@ const output = virtualRequest ? { status: 200, headers: { 'Content-Type': 'text/
 	output.headers["X-DualSubs-Gemini-Key-Source"] = liveAPIKey ? "argument" : Settings.Gemini?.APIKey ? "storage" : "missing";
 	output.headers["X-DualSubs-Gemini-Model"] = Settings.Gemini.Model;
 	Console.logLevel = "WARN";
-	const languages = [
-		(segment.language || "AUTO").toUpperCase(),
-		(url.searchParams?.get("tlang") ?? Caches?.tlang)?.toUpperCase?.() ?? Settings.Languages[1],
-	];
-	const body = VTT.parse(output.body);
+	// The public plugin's explicit target wins over legacy settings and tlang.
+	// Virtual URLs have no target query, so a previous English tlang must not leak in.
+	const target = String(argumentValue("Languages[1]", "TargetLanguage") || "ZH").toUpperCase();
+	if (!["ZH", "ZH-HANS", "ZH-HANT"].includes(target)) throw new Error("无效翻译目标语言，请选择中文");
+	const languages = [(segment.language || "AUTO").toUpperCase(), target];
+	output.headers["X-HBO-AI-Target-Language"] = target;
+	const body = VTT.parse(output.body, { milliseconds: true, timeStamp: true, line: "preserve", lineBreak: "\n" });
 	const fullText = body?.body.map(item => (item?.text ?? "\u200b")?.replace(/<\/?[^<>]+>/g, ""));
 	const originalCacheKey = MD5(`${Settings.Vendor}|${Settings?.Gemini?.Model ?? ""}|${languages.join("|")}|${output.body}`).toString();
 	const cacheKey = MD5(`${CUE_BOUNDARY_CACHE_REVISION}|${originalCacheKey}`).toString();
 	output.headers["X-DualSubs-Gemini-Cache-Revision"] = CUE_BOUNDARY_CACHE_REVISION;
 	let translation = readPersistentTranslation(cacheKey, fullText.length);
+	if (translation && !validChineseTranslation(fullText, translation)) translation = null;
 	if (!Array.isArray(translation) || translation.length !== fullText.length) {
-		const slot = await claimTranslationSlot(cacheKey, fullText.length);
+		const slot = await claimTranslationSlot(cacheKey, fullText.length, fullText);
 		if (slot.translation) {
 			translation = slot.translation;
 			output.headers["X-DualSubs-Gemini-Coordinator"] = "wait-cache-hit";
@@ -104,6 +109,7 @@ const output = virtualRequest ? { status: 200, headers: { 'Content-Type': 'text/
 			output.headers["X-DualSubs-Gemini-Coordinator"] = "leader";
 			try {
 				translation = await translator(Settings.Vendor, Settings.Method, fullText, languages, Settings?.[Settings?.Vendor], Settings?.Times, Settings?.Interval, Settings?.Exponential);
+				if (!validChineseTranslation(fullText, translation)) throw new Error("AI 未返回有效中文译文，请重试");
 				if (Array.isArray(translation) && translation.length === fullText.length) {
 					const saved = savePersistentTranslation(cacheKey, translation);
 					Caches.Subtitles = saved.cache;
@@ -143,6 +149,18 @@ function validNativeVTT(body) {
     return typeof body === "string" && /^WEBVTT(?:\s|$)/.test(body) && /\d{2}:\d{2}(?::\d{2})?\.\d{2,3}\s+-->/.test(body);
 }
 
+function validChineseTranslation(source, translated) {
+    if (!Array.isArray(translated) || translated.length !== source.length || translated.some(t => typeof t !== "string")) return false;
+    const originals = source.join(" ");
+    // Numbers, short names and nonverbal cues can legitimately remain unchanged.
+    if ((originals.match(/[A-Za-z]+/g) || []).length < 12) return true;
+    if (!/[\u3400-\u9fff]/.test(translated.join(" "))) return false;
+    const normalize = text => String(text).replace(/\s+/g, " ").trim().toLowerCase();
+    const dialogue = source.map((text, id) => ({ text, id })).filter(item => (item.text.match(/[A-Za-z]+/g) || []).length >= 4);
+    const copies = dialogue.filter(item => normalize(item.text) === normalize(translated[item.id]));
+    return !dialogue.length || copies.length / dialogue.length < 0.6;
+}
+
 async function translator(vendor = "Gemini", method = "Part", text = [], [source = "AUTO", target = "ZH"], api = {}, times = 3, interval = 100, exponential = true) {
 	let length = 120;
 	if (vendor === "Gemini") length = Math.max(100, Math.min(600, Number.parseInt(api?.BatchSize ?? 400, 10) || 400));
@@ -154,10 +172,10 @@ async function translator(vendor = "Gemini", method = "Part", text = [], [source
 	if (vendor === "Gemini") {
 		// Gemini tends to improve target-language word order by moving clauses
 		// between neighboring subtitle cues. IDs remain valid, but the words then
-		// appear at the wrong timestamps. Distribute consecutive cues across the
-		// same number of API requests and restore their original order afterwards.
+		// appear at the wrong timestamps. Separate neighbouring cues even in short
+		// segments, and restore their original IDs and order afterwards.
 		const scatteredParts = scatterForCueIsolation(text, length);
-		const translatedParts = await Promise.all(scatteredParts.map(part => retry(() => new Translate({ Source: source, Target: target, API: api })[vendor](part.map(item => item.text)), retries, interval, exponential)));
+		const translatedParts = await Promise.all(scatteredParts.map(part => retry(() => new Translate({ Source: source, Target: target, API: { ...api, CueIds: part.map(item => item.index) } })[vendor](part.map(item => item.text)), retries, interval, exponential)));
 		const restored = new Array(text.length);
 		translatedParts.forEach((translatedPart, partIndex) => {
 			scatteredParts[partIndex].forEach((item, itemIndex) => {
@@ -172,6 +190,7 @@ async function translator(vendor = "Gemini", method = "Part", text = [], [source
 
 function combineText(originText, transText, showOnly = false, position = "Forward", lineBreak = "\n") {
 	if (showOnly) return transText;
+	if (String(originText).replace(/\s+/g, " ").trim() === String(transText).replace(/\s+/g, " ").trim()) return originText;
 	return position === "Reverse" ? `${transText}${lineBreak}${originText}` : `${originText}${lineBreak}${transText}`;
 }
 
@@ -183,7 +202,8 @@ function chunk(source, length) {
 }
 
 function scatterForCueIsolation(source, length) {
-	const partCount = Math.max(1, Math.ceil(source.length / length));
+	// Isolate immediate neighbours even when the segment has fewer than 400 cues.
+	const partCount = Math.max(Math.min(3, source.length || 1), Math.ceil(source.length / length));
 	const parts = Array.from({ length: partCount }, () => []);
 	source.forEach((text, index) => parts[index % partCount].push({ index, text }));
 	return parts;
@@ -199,12 +219,12 @@ async function retry(fn, retriesLeft = 3, interval = 100, exponential = true) {
 	}
 }
 
-async function claimTranslationSlot(cacheKey, expectedLength) {
+async function claimTranslationSlot(cacheKey, expectedLength, source) {
 	const owner = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 	const startedAt = Date.now();
 	while (Date.now() - startedAt < WAIT_TIMEOUT && Date.now() < TRANSLATION_DEADLINE - 2000) {
 		const cached = readPersistentTranslation(cacheKey, expectedLength);
-		if (cached) return { translation: cached };
+		if (cached && validChineseTranslation(source, cached)) return { translation: cached };
 		const cooldown = Storage.getItem(COOLDOWN_KEY, {});
 		if (Number(cooldown?.expiresAt ?? 0) > Date.now()) {
 			const waitSeconds = Math.max(1, Math.ceil((Number(cooldown.expiresAt) - Date.now()) / 1000));

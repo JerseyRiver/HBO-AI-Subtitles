@@ -29,7 +29,7 @@ const cnPlayback=JSON.parse(playback());cnPlayback.videos[1].textTracks.push({la
 const cn=await run({url:playbackURL,body:JSON.stringify(cnPlayback),store:new Map(),get:()=>assert.fail('Official Chinese should bypass probes')});assert.equal(JSON.parse(cn.body).videos[1].textTracks.length,2);
 const second=await run({url:master,body:response.body});assert.equal((second.body.match(/NAME="AI 翻译"/g) || []).length,1,'Do not duplicate injected tracks');
 const aiList=origin+'/__hbo_ai__/'+id+'/ai/0/playlist.m3u8',externalList=origin+'/__hbo_ai__/'+id+'/external/0/playlist.m3u8';
-response=await run({url:aiList,request:true});assert.equal(response.response.status,200);assert.equal(response.response.headers['X-HBO-AI-Version'],'0.4.1');assert.ok(response.response.body.includes('/public/static/empty.vtt'));const aiSegment=origin+'/__hbo_ai__/'+id+'/ai/0/seg-0.vtt';assert.equal(JSON.parse(storage.get(KEY)).segments[aiSegment].source,nativeVTT);
+response=await run({url:aiList,request:true});assert.equal(response.response.status,200);assert.equal(response.response.headers['X-HBO-AI-Version'],'0.4.2');assert.ok(response.response.body.includes('/public/static/empty.vtt'));const aiSegment=origin+'/__hbo_ai__/'+id+'/ai/0/seg-0.vtt';assert.equal(JSON.parse(storage.get(KEY)).segments[aiSegment].source,nativeVTT);
 // A master refresh must not erase the existing AI segment registration.
 await run({url:master,body:main});assert.ok(JSON.parse(storage.get(KEY)).segments[aiSegment]);
 let apiCalls=0;

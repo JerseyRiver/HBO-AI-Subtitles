@@ -2,12 +2,12 @@
 #!desc = HBO Max 字幕：官方中文优先，可获取字幕时 AI 翻译，否则 VPS 外部字幕；每次只添加一种选项。
 #!author = JerseyRiver
 #!icon = https://raw.githubusercontent.com/JerseyRiver/HBO-AI-Subtitles/main/icons/hbo-ai.png
-#!version = 0.4.1
-#!date = 2026-10-09
+#!version = 0.4.2
+#!date = 2026-10-12
 #!system = iOS,iPadOS
 
 [Argument]
-QualityCompatibility = switch,false,tag=保留旧最高画质逻辑,desc=原来使用 HBO iPad Highest Quality 时可开启；此时停用旧最高画质插件，避免规则抢先匹配。
+QualityCompatibility = switch,false,tag=最高画质,desc=开启后将 iPad 识别为 Apple TV，并尝试以最高可用画质播放正片。画质取决于片源、账号和设备。请停用其他 HBO 画质插件。
 GeminiAPIKey = input,"",tag=Gemini API Key,desc=填写自己的 Key。
 GeminiModel = input,"gemini-3.5-flash-lite",tag=Gemini 模型,desc=填写账号可用的精确模型 ID。
 Languages[1] = select,"ZH","ZH-HANS","ZH-HANT",tag=翻译目标语言,desc=设备端 Gemini 翻译的目标语言；网关外部字幕为简体中文。
