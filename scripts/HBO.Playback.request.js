@@ -1,6 +1,6 @@
 /* HBO AI Subtitles: independent options with optional existing quality integration.
  * GPL-3.0-only; upstream quality logic: MIT, see upstream/hbo-quality/LICENSE. */
-if($argument && String($argument.QualityCompatibility)==="true")(function($request,$response,$argument,$done){
+if($argument && (String($argument.QualityCompatibility)==="true" || String($argument.AudioQuality)==="true"))(function($request,$response,$argument,$done){
 /* Experimental Apple TV playback identity. This is not a captured tvOS profile. */
 (function () {
   var prefix = '[HBO iPad Playback] ';

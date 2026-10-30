@@ -1,6 +1,8 @@
 /* Experimental: preserve pre/post-roll segments; replace only the main chapter. */
 (function () {
   var storeKey='HBO.iPad.PeriodPlan.v1', finished=false;
+  var videoEnabled=$argument && String($argument.QualityCompatibility)==='true';
+  var audioEnabled=$argument && String($argument.AudioQuality)==='true';
   function done(result) { if (!finished) { finished=true; $done(result || {}); } }
   function attrs(line) {
     var out={},regex=/([A-Z0-9-]+)=("[^"]*"|[^,]*)/g,match;
@@ -51,21 +53,21 @@
     });
     if(!variants.length) throw new Error('empty');
     var prefs=['dv5','hevc-hdr','hevc-sdr','avc','other'];
-    variants.sort(function(a,b){return b.pixels-a.pixels || prefs.indexOf(a.family)-prefs.indexOf(b.family) ||
-      audioRank(b.a.AUDIO || '',media,b.a.CODECS || '')-audioRank(a.a.AUDIO || '',media,a.a.CODECS || '') ||
+    variants.sort(function(a,b){return (!videoEnabled && audioEnabled ? audioRank(b.a.AUDIO || '',media,b.a.CODECS || '')-audioRank(a.a.AUDIO || '',media,a.a.CODECS || '') : 0) || b.pixels-a.pixels || prefs.indexOf(a.family)-prefs.indexOf(b.family) ||
+      (audioEnabled ? audioRank(b.a.AUDIO || '',media,b.a.CODECS || '')-audioRank(a.a.AUDIO || '',media,a.a.CODECS || '') : 0) ||
       +(b.a['AVERAGE-BANDWIDTH'] || b.a.BANDWIDTH || 0)-+(a.a['AVERAGE-BANDWIDTH'] || a.a.BANDWIDTH || 0) || +b.a.BANDWIDTH-+a.a.BANDWIDTH;});
     var top=variants[0]; if(top.family==='other' || !allowed(top.uri)) throw new Error('unsupported');
     // Retain resolution choices within one video family, avoiding SDR/Dolby Vision mixing.
     var keep={},audioGroups={},groups={},mappings={};
-    variants.filter(function(v){return v.family===top.family && (plan.start>0 || v.index===top.index);}).forEach(function(v){
+    variants.filter(function(v){return !videoEnabled || v.family===top.family && (plan.start>0 || !audioEnabled || v.index===top.index);}).forEach(function(v){
       if(!allowed(v.uri)) throw new Error('host');
-      keep[v.index]=v;mappings[v.uri]={url:top.uri,kind:'video'};audioGroups[v.a.AUDIO || '']=true;
+      keep[v.index]=v;if(videoEnabled)mappings[v.uri]={url:top.uri,kind:'video'};audioGroups[v.a.AUDIO || '']=true;
       ['AUDIO','SUBTITLES','VIDEO','CLOSED-CAPTIONS'].forEach(function(type){if(v.a[type] && v.a[type]!=='NONE') groups[type+':'+v.a[type]]=true;});
     });
     var targetAudio=media.filter(function(m){return m.TYPE==='AUDIO' && m['GROUP-ID']===top.a.AUDIO;});
     var targetByKey={};targetAudio.forEach(function(m){targetByKey[audioKey(m)]=m;});
     media.forEach(function(m){
-      if(m.TYPE!=='AUDIO' || !audioGroups[m['GROUP-ID']] || !m.URI) return;
+      if(!audioEnabled || m.TYPE!=='AUDIO' || !audioGroups[m['GROUP-ID']] || !m.URI) return;
       var target=targetByKey[audioKey(m)];if(!target || !target.URI) return;
       var u=absolute(m.URI,$request.url),t=absolute(target.URI,$request.url);
       if(!allowed(u) || !allowed(t)) throw new Error('audio host');
@@ -77,10 +79,10 @@
       if(line.indexOf('#EXT-X-STREAM-INF:')===0) {
         var v=keep[n];
         if(v) {
-          var codecs=[mainVideoCodec].concat(v.a.CODECS.split(',').slice(1),mainAudioCodecs).filter(function(c,i,a){return a.indexOf(c)===i;});
+          var codecs=[videoEnabled?mainVideoCodec:v.a.CODECS.split(',')[0]].concat(v.a.CODECS.split(',').slice(1),audioEnabled?mainAudioCodecs:[]).filter(function(c,i,a){return a.indexOf(c)===i;});
           line=setAttr(line,'CODECS',codecs.join(','),true);
-          ['RESOLUTION','FRAME-RATE','VIDEO-RANGE','HDCP-LEVEL'].forEach(function(k){if(top.a[k]) line=setAttr(line,k,top.a[k],false);});
-          ['BANDWIDTH','AVERAGE-BANDWIDTH'].forEach(function(k){if(top.a[k]) line=setAttr(line,k,Math.max(+(v.a[k] || 0),+top.a[k]),false);});
+          ['RESOLUTION','FRAME-RATE','VIDEO-RANGE','HDCP-LEVEL'].forEach(function(k){if(videoEnabled && top.a[k]) line=setAttr(line,k,top.a[k],false);});
+          ['BANDWIDTH','AVERAGE-BANDWIDTH'].forEach(function(k){if(videoEnabled && top.a[k]) line=setAttr(line,k,Math.max(+(v.a[k] || 0),+top.a[k]),false);});
           // Advertise sufficient bitrate for the forced main, including lower-resolution pre-roll variants.
           result.push(line,lines[n+1]);
         }
@@ -88,7 +90,7 @@
       } else if(line.indexOf('#EXT-X-MEDIA:')===0) {
         var m=attrs(line);
         if(groups[m.TYPE+':'+m['GROUP-ID']]) {
-          var target=m.TYPE==='AUDIO'?targetByKey[audioKey(m)]:null;
+          var target=audioEnabled && m.TYPE==='AUDIO'?targetByKey[audioKey(m)]:null;
           if(target && target.CHANNELS) line=setAttr(line,'CHANNELS',target.CHANNELS,true);
           result.push(line);
         }
@@ -96,7 +98,7 @@
     }
     plan.media=mappings;
     if(!$persistentStore.write(JSON.stringify(plan),storeKey)) throw new Error('storage');
-    console.log('[HBO iPad Period] Pre-roll choices retained within '+top.family+'; main target '+top.a.RESOLUTION+' / '+(top.a.AUDIO || 'embedded'));
+    console.log('[HBO iPad Period] Video='+!!videoEnabled+'; audio='+!!audioEnabled+'; target '+top.a.RESOLUTION+' / '+(top.a.AUDIO || 'embedded'));
     done({body:result.join(body.indexOf('\r\n')>=0?'\r\n':'\n')});
   }
   function parseMedia(body,base,plan) {
@@ -147,6 +149,7 @@
     done({body:result.join(body.indexOf('\r\n')>=0?'\r\n':'\n')});
   }
   try {
+    if(!videoEnabled && !audioEnabled) {done();return;}
     if(!allowed($request.url) || typeof $response.body!=='string' || !/^#EXTM3U/.test($response.body) || Number($response.statusCode || $response.status || 200)!==200) {done();return;}
     var plan=readPlan();if(!plan) {done();return;}
     var body=$response.body;
@@ -155,7 +158,7 @@
       master(body,plan);return;
     }
     var mapping=plan.media[$request.url];
-    if(!mapping || mapping.url===$request.url || body.indexOf('#EXTINF:')<0) {done();return;}
+    if(!mapping || mapping.kind==='audio' && !audioEnabled || mapping.kind==='video' && !videoEnabled || mapping.url===$request.url || body.indexOf('#EXTINF:')<0) {done();return;}
     var cached=(plan.cache || []).filter(function(c){return c.url===mapping.url;})[0];
     if(cached) {splice(body,cached.body,mapping.url,plan,mapping.kind);return;}
     setTimeout(function(){done();},6500);

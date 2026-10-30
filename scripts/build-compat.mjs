@@ -10,7 +10,7 @@ const response = banner + '(async function(){\n' +
   'let current=Object.assign({},$response);\n' +
   'function apply(fn){return new Promise(resolve=>fn($request,current,$argument,v=>{if(v)current=Object.assign({},current,v);resolve();}));}\n' +
   'await apply(' + subtitle + ');\n' +
-  'if($argument && String($argument.QualityCompatibility)==="true"){if(/\\/playbackInfo(?:\\?|$)/.test($request.url))await apply(' + plan + ');else if(/\\.m3u8(?:\\?|$)/.test($request.url))await apply(' + quality + '); }\n' +
+  'if($argument && (String($argument.QualityCompatibility)==="true" || String($argument.AudioQuality)==="true")){if(/\\/playbackInfo(?:\\?|$)/.test($request.url))await apply(' + plan + ');else if(/\\.m3u8(?:\\?|$)/.test($request.url))await apply(' + quality + '); }\n' +
   '$done(current);\n})().catch(()=>{$done({});});\n';
 fs.writeFileSync(new URL('HBO.Compatible.response.js',import.meta.url),response);
-fs.writeFileSync(new URL('HBO.Playback.request.js',import.meta.url),banner+'if($argument && String($argument.QualityCompatibility)==="true")'+request+'($request,undefined,$argument,$done);else $done({});\n');
+fs.writeFileSync(new URL('HBO.Playback.request.js',import.meta.url),banner+'if($argument && (String($argument.QualityCompatibility)==="true" || String($argument.AudioQuality)==="true"))'+request+'($request,undefined,$argument,$done);else $done({});\n');
