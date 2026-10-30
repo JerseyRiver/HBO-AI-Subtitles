@@ -3,7 +3,7 @@ const read = file => fs.readFileSync(new URL('../' + file, import.meta.url), 'ut
 const module = file => '(function($request,$response,$argument,$done){\n' + read(file) + '\n})';
 const subtitle = module('scripts/HBO.Subtitles.js');
 const plan = module('upstream/hbo-quality/hbo-period-plan.response.js');
-const quality = module('upstream/hbo-quality/hbo-period-quality.response.js');
+const quality = module('src/QualitySelection.js');
 const request = module('upstream/hbo-quality/hbo-playback.request.js');
 const banner = '/* HBO AI Subtitles: independent options with optional existing quality integration.\n * GPL-3.0-only; upstream quality logic: MIT, see upstream/hbo-quality/LICENSE. */\n';
 const response = banner + '(async function(){\n' +

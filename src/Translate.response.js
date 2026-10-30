@@ -26,7 +26,7 @@ const filmCache = new FilmCache($persistentStore, FILM_CACHE_LIMIT, () => {
 });
 const CUE_BOUNDARY_CACHE_REVISION = "cue-isolation-v3-target-checked";
 const virtualRequest = typeof $response === 'undefined';
-const output = virtualRequest ? { status: 200, headers: { 'Content-Type': 'text/vtt; charset=utf-8', 'X-HBO-AI-Version': '0.4.3', 'Cache-Control': 'private, max-age=60' }, body: '' } : $response;
+const output = virtualRequest ? { status: 200, headers: { 'Content-Type': 'text/vtt; charset=utf-8', 'X-HBO-AI-Version': '0.4.4', 'Cache-Control': 'private, max-age=60' }, body: '' } : $response;
 
 (async () => {
     if (!virtualRequest) return;
